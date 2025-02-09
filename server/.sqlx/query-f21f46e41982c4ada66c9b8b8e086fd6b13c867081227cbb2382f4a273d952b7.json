@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO download (isbn, bearer, datetime, path) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "f21f46e41982c4ada66c9b8b8e086fd6b13c867081227cbb2382f4a273d952b7"
+}

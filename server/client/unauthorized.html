@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="./output.css" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="w-96 mx-auto mt-4 p-2">
+      <h1 class="text-3xl text-bold text-green-900 text-center">
+        Connect to libro.fm
+      </h1>
+      <div class="text-xs italic text-center text-green-900 pb-4">
+        Continue to give Bookstride access to your libro.fm library.
+      </div>
+      <div
+        class="text-md border-red-600 text-red-600 border-2 rounded-md mb-8 p-2 text-center"
+      >
+        Username or password unrecognized.
+      </div>
+      <form
+        class="grid grid-cols-[100px_minmax(0,_1fr)] gap-2"
+        action="/auth"
+        method="post"
+      >
+        <label>Email: </label>
+        <input
+          id="email"
+          type="email"
+          name="username"
+          autofocus
+          class="border-2 border-green-500 rounded-md"
+        />
+        <label>Password:</label>
+        <input
+          id="password"
+          type="password"
+          name="password"
+          class="border-2 border-green-500 rounded-md"
+        />
+        <div class="col-span-2">
+          <input
+            type="submit"
+            value="Login"
+            class="rounded-md py-2 px-12 bg-green-900 text-green-100 w-full cursor-pointer"
+          />
+        </div>
+        <div class="col-span-2 flex justify-center">
+          <a
+            class="underline text-blue-400 text-sm"
+            href="https://libro.fm/password-reset"
+            >Forgot your password?</a
+          >
+          &nbsp;•&nbsp;<a
+            class="underline text-blue-400 text-sm"
+            href="https://libro.fm/users/signup"
+            >Create an account</a
+          >
+        </div>
+      </form>
+    </div>
+  </body>
+</html>

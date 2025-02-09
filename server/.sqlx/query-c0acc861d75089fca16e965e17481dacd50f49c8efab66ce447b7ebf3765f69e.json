@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM download WHERE isbn = ? AND bearer = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "c0acc861d75089fca16e965e17481dacd50f49c8efab66ce447b7ebf3765f69e"
+}

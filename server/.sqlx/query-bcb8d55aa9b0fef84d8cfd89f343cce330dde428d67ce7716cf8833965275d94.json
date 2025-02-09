@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_id, ready FROM track WHERE isbn = ? AND bearer = ? AND track = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "ready",
+        "ordinal": 1,
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "bcb8d55aa9b0fef84d8cfd89f343cce330dde428d67ce7716cf8833965275d94"
+}

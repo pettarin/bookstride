@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT track FROM track WHERE isbn = ? AND bearer = ? AND ready = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "track",
+        "ordinal": 0,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c41e9a36f5630a3294d590ce60078c27490505ee0d0880868253a147e4b78d60"
+}

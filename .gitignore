@@ -1,0 +1,6 @@
+build
+bin
+server/target
+.DS_Store
+node_modules
+server/bookstride_srv.sqlite

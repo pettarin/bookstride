@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO track (isbn, bearer, track, datetime, file_id, ready) VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "91c81eeb64f4ced97f14a15661ccf1ee57ab4a22233e6ebabc955e157dc5e898"
+}

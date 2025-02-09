@@ -1,0 +1,11 @@
+<strings xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://developer.garmin.com/downloads/connect-iq/resources.xsd">
+    <string id="AppName">Bookstride</string>
+
+    <string id="fetchingBooks">Fetching Books</string>
+    <string id="syncMenuTitle">Choose Books</string>
+    <string id="continueOnPhone">Continue on\nphone</string>yy
+    <string id="configureSyncMessage">Configure\nSync</string>yy
+    <string id="configurePlaybackMessage">Configure\nPlayback</string>
+    <string id="playbackMenuTitle">Choose a Book</string>
+    <string id="noBooks">No books synced</string>
+</strings>

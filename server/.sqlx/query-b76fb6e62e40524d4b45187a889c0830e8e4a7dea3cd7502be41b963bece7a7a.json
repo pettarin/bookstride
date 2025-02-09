@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH first AS (\n                SELECT\n                    isbn,\n                    bearer\n                FROM download\n                WHERE isbn\n                ORDER BY datetime\n                LIMIT 1\n            ) SELECT\n                first.isbn AS isbn,\n                first.bearer AS bearer,\n                path \n            FROM first\n            LEFT JOIN download\n            ON download.isbn = first.isbn AND download.bearer = first.bearer",
+  "describe": {
+    "columns": [
+      {
+        "name": "isbn",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "bearer",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "path",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "b76fb6e62e40524d4b45187a889c0830e8e4a7dea3cd7502be41b963bece7a7a"
+}

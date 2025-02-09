@@ -1,0 +1,7 @@
+<properties>
+    <property id="AUTHENTICATION_TOKEN" type="String"></property>
+    <property id="BOOKS" type="array"></property>
+    <property id="CURRENT_ISBN" type="string"></property>
+    <property id="PENDING_SYNC" type="array"></property>
+    <property id="PENDING_DELETE" type="array"></property>
+</properties>
