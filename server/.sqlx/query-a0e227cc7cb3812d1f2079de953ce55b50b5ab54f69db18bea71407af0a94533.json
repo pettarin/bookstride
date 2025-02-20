@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM track WHERE isbn = ? AND bearer = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a0e227cc7cb3812d1f2079de953ce55b50b5ab54f69db18bea71407af0a94533"
+}

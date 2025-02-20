@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE track SET ready = 1 WHERE isbn = ? AND bearer = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "989252cb045c5d365bf9335c4d77b1882a430c5a3ec6d215d2f8b7a21e74d7f8"
+}

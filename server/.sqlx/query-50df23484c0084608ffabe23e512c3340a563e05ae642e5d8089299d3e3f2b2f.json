@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT track FROM track WHERE isbn = ? AND bearer = ? AND ready = 0",
+  "query": "SELECT file_id FROM track WHERE isbn = ? AND bearer = ? ORDER BY track",
   "describe": {
     "columns": [
       {
-        "name": "track",
+        "name": "file_id",
         "ordinal": 0,
         "type_info": "Int64"
       }
@@ -13,8 +13,8 @@
       "Right": 2
     },
     "nullable": [
-      true
+      false
     ]
   },
-  "hash": "c41e9a36f5630a3294d590ce60078c27490505ee0d0880868253a147e4b78d60"
+  "hash": "50df23484c0084608ffabe23e512c3340a563e05ae642e5d8089299d3e3f2b2f"
 }
