@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rocket = {version = "0.5.1", features = ["secrets", "json"]}
+rocket = {version = "0.5.1", features = ["json"]}
 reqwest = {version = "0.12.12", features = ["json"]}
 rocket_db_pools = {version = "0.2.0", features = ["sqlx_sqlite"]}
 sqlx = {version = "*", features = ["migrate"]}
