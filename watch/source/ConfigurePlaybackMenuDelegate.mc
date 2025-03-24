@@ -11,8 +11,17 @@ class ConfigurePlaybackMenuDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onSelect(item) {
-        Application.Properties.setValue("CURRENT_ISBN", item.getId());
-        System.println("select");
+        if (item.getId() == null) {
+            WatchUi.pushView(new ConfigureSyncView(), null, WatchUi.SLIDE_IMMEDIATE);
+        } else {
+            Application.Properties.setValue("CURRENT_ISBN", item.getId());
+            System.println("select");
+            Media.startPlayback(null);
+        }
+    }
+
+    function onBack() {
+        System.println("back2");
         Media.startPlayback(null);
     }
 }

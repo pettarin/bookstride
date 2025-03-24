@@ -2,7 +2,7 @@
     <string id="AppName">Bookstride</string>
 
     <string id="fetchingBooks">Fetching Books</string>
-    <string id="syncMenuTitle">Choose Books</string>
+    <string id="syncMenuTitle">Downloads</string>
     <string id="continueOnPhone">Continue on\nphone</string>yy
     <string id="configureSyncMessage">Configure\nSync</string>yy
     <string id="configurePlaybackMessage">Configure\nPlayback</string>

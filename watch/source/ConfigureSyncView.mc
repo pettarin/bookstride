@@ -25,7 +25,8 @@ class ConfigureSyncView extends WatchUi.View {
         if (token == null || token.equals("")) {
              WatchUi.pushView(new OauthView(), null, WatchUi.SLIDE_IMMEDIATE);
         } else if (mMenuShown) {
-            WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
+            // NOTE: Popping the view before starting playback causes problems...
+            Media.startPlayback(null);
         } else {
             token = Application.Properties.getValue("AUTHENTICATION_TOKEN");
             Communications.makeWebRequest(Constants.LIBRARY_URL + "1", null, {:headers => {"Authorization" => "Bearer " + token}}, method(:onFileListing));
@@ -74,7 +75,6 @@ class ConfigureSyncView extends WatchUi.View {
             precheckedItems[isbn] = true;
         }
 
-        // Add in songs that need to be synced to the prechecked list
         var isbnsToSync = Application.Properties.getValue("PENDING_SYNC") as Lang.Array<Lang.Dictionary> or Null;
         if (isbnsToSync == null) {
             isbnsToSync = [];
@@ -82,6 +82,15 @@ class ConfigureSyncView extends WatchUi.View {
 
         for (var idx = 0; idx < isbnsToSync.size(); ++idx) {
             precheckedItems[isbnsToSync[idx]] = true;
+        }
+
+        var isbnsToDelete = Application.Properties.getValue("PENDING_DELETE") as Lang.Array<Lang.Dictionary> or Null;
+        if (isbnsToDelete == null) {
+            isbnsToDelete = [];
+        }
+
+        for (var idx = 0; idx < isbnsToDelete.size(); ++idx) {
+            precheckedItems.remove(isbnsToDelete[idx]);
         }
 
         // Create the menu, prechecking anything that is to be or has been synced

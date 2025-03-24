@@ -36,5 +36,6 @@ class ContentDelegate extends Media.ContentDelegate {
     // Handles a notification from the system that an event has
     // been triggered for the given song
     function onSong(contentRefId as Object, songEvent as SongEvent, playbackPosition as Number or PlaybackPosition) as Void {
+        System.println('v');
     }
 }

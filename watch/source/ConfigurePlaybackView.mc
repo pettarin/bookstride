@@ -36,7 +36,9 @@ class ConfigurePlaybackView extends WatchUi.View {
             }
             mMenuShown = true;
         } else {
-            WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
+            // NOTE: Popping the view before starting playback causes problems...
+            System.println("start playback");
+            Media.startPlayback(null);
         }
     }
 

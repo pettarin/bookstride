@@ -4,7 +4,7 @@ using Toybox.Media;
 
 // Iterator to control the order of song playback
 class ContentIterator extends Media.ContentIterator {
-    private var mTrackIndex;
+    private var mTrackIndex = 0;
     private var mTracks = [];
 
     // Constructor

@@ -29,5 +29,7 @@ class ConfigurePlaybackMenu extends WatchUi.Menu2 {
             System.println(item);
             addItem(item);
         }
+
+        addItem(new WatchUi.MenuItem("Add/remove books", null, null, null));
     }
 }

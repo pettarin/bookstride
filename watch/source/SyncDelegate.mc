@@ -58,6 +58,7 @@ class SyncDelegate extends Communications.SyncDelegate {
 
     // Determines if a sync is needed or not
     function isSyncNeeded() {
+        System.println("call isSyncNeeded");
         return ((mSyncList.size() != 0) || (mDeleteList.size() != 0));
     }
 

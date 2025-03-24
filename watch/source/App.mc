@@ -4,7 +4,7 @@ import Toybox.Lang;
 import Toybox.Media;
 import Toybox.WatchUi;
 
-class bookstrideApp extends Application.AudioContentProviderApp {
+class App extends Application.AudioContentProviderApp {
 
     function initialize() {
         AudioContentProviderApp.initialize();
@@ -30,16 +30,18 @@ class bookstrideApp extends Application.AudioContentProviderApp {
 
     // Get the initial view for configuring playback
     function getPlaybackConfigurationView() as [Views] or [Views, InputDelegates] {
-        return [ new ConfigurePlaybackView() ];
+        return [ new HomeView(), new BaseDelegate() ];
+        // return [ new ConfigurePlaybackView(), new BaseDelegate() ];
     }
 
     // Get the initial view for configuring sync
     function getSyncConfigurationView() as [Views] or [Views, InputDelegates] {
-        return [ new ConfigureSyncView() ];
+        return [ new HomeView(), new BaseDelegate() ];
+        // return [ new ConfigureSyncView(), new BaseDelegate() ];
     }
 
 }
 
-function getApp() as bookstrideApp {
-    return Application.getApp() as bookstrideApp;
+function getApp() as App {
+    return Application.getApp() as App;
 }
