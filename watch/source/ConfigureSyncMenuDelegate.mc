@@ -18,11 +18,9 @@ class ConfigureSyncMenuDelegate extends WatchUi.Menu2InputDelegate {
   // list of songs to sync or delete
   function onSelect(item) {
     if ((item as WatchUi.CheckboxMenuItem).isChecked()) {
-      System.println(item.getId());
       mSyncList.add(item.getId());
       mDeleteList.remove(item.getId());
     } else {
-      System.println("Unselected" + item.getId());
       mSyncList.remove(item.getId());
       mDeleteList.add(item.getId());
     }
@@ -39,9 +37,6 @@ class ConfigureSyncMenuDelegate extends WatchUi.Menu2InputDelegate {
     Application.Properties.setValue("PENDING_SYNC", mSyncList);
     Application.Properties.setValue("PENDING_DELETE", mDeleteList);
 
-    System.println("onBack");
-    System.println(mSyncList);
-    System.println(mDeleteList);
     if (mSyncList.size() > 0 || mDeleteList.size() > 0) {
       Communications.startSync();
     } else {
@@ -60,9 +55,6 @@ class ConfigureSyncMenuDelegate extends WatchUi.Menu2InputDelegate {
     Application.Properties.setValue("PENDING_SYNC", mSyncList);
     Application.Properties.setValue("PENDING_DELETE", mDeleteList);
 
-    System.println("onDone");
-    System.println(mSyncList);
-    System.println(mDeleteList);
     if (mSyncList.size() > 0 || mDeleteList.size() > 0) {
       Communications.startSync();
     } else {

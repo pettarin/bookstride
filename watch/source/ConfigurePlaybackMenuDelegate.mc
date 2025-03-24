@@ -1,6 +1,7 @@
 using Toybox.Media;
 using Toybox.WatchUi;
 using Toybox.Application;
+using Toybox.System;
 
 // Delegate for playback menu
 class ConfigurePlaybackMenuDelegate extends WatchUi.Menu2InputDelegate {
@@ -14,13 +15,22 @@ class ConfigurePlaybackMenuDelegate extends WatchUi.Menu2InputDelegate {
       WatchUi.pushView(new ConfigureSyncView(), null, WatchUi.SLIDE_IMMEDIATE);
     } else {
       Application.Properties.setValue("CURRENT_ISBN", item.getId());
-      System.println("select");
       Media.startPlayback(null);
     }
   }
 
   function onBack() {
-    System.println("back2");
-    Media.startPlayback(null);
+    var isbn = Application.Properties.getValue("CURRENT_ISBN");
+    var books = Application.Properties.getValue("BOOKS");
+    if (books != null) {
+      for (var i = 0; i < books.size(); i += 1) {
+        if (books[i]["isbn"] == isbn) {
+          Media.startPlayback(null);
+          return;
+        }
+      }
+    }
+
+    System.exit();
   }
 }

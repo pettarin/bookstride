@@ -1,6 +1,7 @@
 using Toybox.Application;
 using Toybox.Math;
 using Toybox.Media;
+using Toybox.Lang;
 
 // Iterator to control the order of song playback
 class ContentIterator extends Media.ContentIterator {
@@ -18,16 +19,17 @@ class ContentIterator extends Media.ContentIterator {
     var profile = new PlaybackProfile();
 
     profile.playbackControls = [
-      Media.PLAYBACK_CONTROL_PLAYBACK,
+      Media.PLAYBACK_CONTROL_SKIP_BACKWARD,
+      Media.PLAYBACK_CONTROL_SKIP_FORWARD,
       Media.PLAYBACK_CONTROL_PREVIOUS,
       Media.PLAYBACK_CONTROL_NEXT,
-      Media.PLAYBACK_CONTROL_SKIP_FORWARD,
-      Media.PLAYBACK_CONTROL_SKIP_BACKWARD,
+      Media.PLAYBACK_CONTROL_LIBRARY,
+      Media.PLAYBACK_CONTROL_PLAYBACK
     ];
 
     profile.attemptSkipAfterThumbsDown = false;
-    profile.requirePlaybackNotification = false;
-    profile.playbackNotificationThreshold = 30;
+    profile.requirePlaybackNotification = true;
+    profile.playbackNotificationThreshold = 15;
     profile.skipPreviousThreshold = 10;
 
     return profile;
@@ -73,7 +75,6 @@ class ContentIterator extends Media.ContentIterator {
     return obj;
   }
 
-  // Returns the next song, or null if there is no next song, without decrementing the current song index.
   function peekNext() {
     var nextIndex = mTrackIndex + 1;
     if (nextIndex < mTracks.size()) {
@@ -86,7 +87,6 @@ class ContentIterator extends Media.ContentIterator {
     return null;
   }
 
-  // Returns the previous song, or null if there is no previous song, without incrementing the current song index.
   function peekPrevious() {
     var previousIndex = mTrackIndex - 1;
     if (previousIndex >= 0) {
@@ -99,25 +99,22 @@ class ContentIterator extends Media.ContentIterator {
     return null;
   }
 
-  // Return if shuffling is enabled or not
   function shuffling() {
     return false;
   }
 
-  // Returns if the current song can be skipped. This is controlled by the data returned by the server.
   function canSkip() {
     return true;
   }
 
-  // Toggles shuffling
   function toggleShuffle() {}
 
-  // Shuffle the current playlist, leaving the current song at index 0.
   function shufflePlaylist() {}
 
   function initializePlaylist() {
     var isbn = Application.Properties.getValue("CURRENT_ISBN");
     var books = Application.Properties.getValue("BOOKS");
+    mTracks = [];
     if (books != null) {
       for (var i = 0; i < books.size(); i += 1) {
         if (books[i]["isbn"] == isbn) {
@@ -125,6 +122,11 @@ class ContentIterator extends Media.ContentIterator {
         }
       }
     }
-    mTrackIndex = 0;
+    var savedIndex = Application.Properties.getValue("CURRENT_TRACK") as Lang.String or Lang.Number or Null;
+    if (savedIndex == null || !(savedIndex instanceof Lang.Number) || savedIndex >= mTracks.size())  {
+        mTrackIndex = 0;
+    } else {
+        mTrackIndex = savedIndex;
+    }
   }
 }

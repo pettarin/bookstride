@@ -8,12 +8,13 @@ class HomeView extends WatchUi.View {
   function initialize() {
     View.initialize();
   }
+  private var mShownOnce = false;
 
   // If the page hasn't been shown yet push the Configure playback menu. Otherwise pop the page.
   function onShow() {
     var books = Application.Properties.getValue("BOOKS");
 
-    if (books != null && books.size() != 0) {
+    if (books != null && books.size() != 0 || mShownOnce) {
       WatchUi.pushView(
         new ConfigurePlaybackMenu(),
         new ConfigurePlaybackMenuDelegate(),
@@ -22,5 +23,7 @@ class HomeView extends WatchUi.View {
     } else {
       WatchUi.pushView(new ConfigureSyncView(), null, WatchUi.SLIDE_IMMEDIATE);
     }
+
+    mShownOnce = true;
   }
 }

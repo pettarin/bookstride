@@ -1,5 +1,6 @@
 using Toybox.Application;
 using Toybox.Graphics;
+using Toybox.Lang;
 using Toybox.Media;
 using Toybox.WatchUi;
 
@@ -15,7 +16,7 @@ class ConfigurePlaybackView extends WatchUi.View {
     View.initialize();
 
     // Push the authentication view if not authenticated
-    var token = Application.Properties.getValue("AUTHENTICATION_TOKEN");
+    var token = Application.Properties.getValue("AUTHENTICATION_TOKEN") as Lang.String or Null;
     if (token == null || token.equals("")) {
       WatchUi.pushView(new OauthView(), null, WatchUi.SLIDE_IMMEDIATE);
     }
@@ -40,7 +41,6 @@ class ConfigurePlaybackView extends WatchUi.View {
       mMenuShown = true;
     } else {
       // NOTE: Popping the view before starting playback causes problems...
-      System.println("start playback");
       Media.startPlayback(null);
     }
   }

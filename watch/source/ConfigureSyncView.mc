@@ -11,6 +11,7 @@ class ConfigureSyncView extends WatchUi.View {
   private var mSongs;
   // Wheter the view has been shown or not
   private var mMenuShown;
+  private var mShowedOauth = false;
 
   // Constructor
   function initialize() {
@@ -21,12 +22,16 @@ class ConfigureSyncView extends WatchUi.View {
   // When shown, decide if the songs should be fetched or the view popped (when returning from the menu)
   function onShow() {
     // If not authenticated, get authentication first
-    var token = Application.Properties.getValue("AUTHENTICATION_TOKEN");
+    var token = Application.Properties.getValue("AUTHENTICATION_TOKEN") as Lang.String or Null;
     if (token == null || token.equals("")) {
-      WatchUi.pushView(new OauthView(), null, WatchUi.SLIDE_IMMEDIATE);
+      if (mShowedOauth) {
+        System.exit();
+      } else {
+        WatchUi.pushView(new OauthView(), null, WatchUi.SLIDE_IMMEDIATE);
+        mShowedOauth = true;
+      }
     } else if (mMenuShown) {
-      // NOTE: Popping the view before starting playback causes problems...
-      Media.startPlayback(null);
+      WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
     } else {
       token = Application.Properties.getValue("AUTHENTICATION_TOKEN");
       Communications.makeWebRequest(
@@ -45,14 +50,16 @@ class ConfigureSyncView extends WatchUi.View {
     dc.clear();
     dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
 
-    // Indicate that the songs are being fetched
-    dc.drawText(
-      dc.getWidth() / 2,
-      dc.getHeight() / 2,
-      Graphics.FONT_MEDIUM,
-      WatchUi.loadResource(Rez.Strings.fetchingBooks),
-      Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
-    );
+    if (!mMenuShown) {
+      // Indicate that the songs are being fetched
+      dc.drawText(
+        dc.getWidth() / 2,
+        dc.getHeight() / 2,
+        Graphics.FONT_MEDIUM,
+        WatchUi.loadResource(Rez.Strings.fetchingBooks),
+        Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
+      );
+    }
   }
 
   // Store the fetched songs
@@ -63,6 +70,10 @@ class ConfigureSyncView extends WatchUi.View {
     if (responseCode == 200) {
       mSongs = data["res"];
       pushSyncMenu();
+    } else if (responseCode == 401) {
+      Application.Properties.setValue("AUTHENTICATION_TOKEN", null);
+      WatchUi.pushView(new OauthView(), null, WatchUi.SLIDE_IMMEDIATE);
+      mShowedOauth = true;
     } else {
       if (data != null) {
         WatchUi.pushView(
