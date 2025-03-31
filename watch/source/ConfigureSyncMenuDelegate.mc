@@ -39,9 +39,9 @@ class ConfigureSyncMenuDelegate extends WatchUi.Menu2InputDelegate {
 
     if (mSyncList.size() > 0 || mDeleteList.size() > 0) {
       Communications.startSync();
-    } else {
-      WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
     }
+
+    WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
   }
 
   // Stores the songs to delete and download in the object store
@@ -57,9 +57,9 @@ class ConfigureSyncMenuDelegate extends WatchUi.Menu2InputDelegate {
 
     if (mSyncList.size() > 0 || mDeleteList.size() > 0) {
       Communications.startSync();
-    } else {
-      WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
     }
+
+    WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
   }
 
   // Utility function to get the ContentRefId from the already downloaded songs.

@@ -31,6 +31,6 @@ class ConfigurePlaybackMenuDelegate extends WatchUi.Menu2InputDelegate {
       }
     }
 
-    System.exit();
+    WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
   }
 }

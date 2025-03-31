@@ -25,7 +25,7 @@ class ConfigureSyncView extends WatchUi.View {
     var token = Application.Properties.getValue("AUTHENTICATION_TOKEN") as Lang.String or Null;
     if (token == null || token.equals("")) {
       if (mShowedOauth) {
-        System.exit();
+        WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
       } else {
         WatchUi.pushView(new OauthView(), null, WatchUi.SLIDE_IMMEDIATE);
         mShowedOauth = true;

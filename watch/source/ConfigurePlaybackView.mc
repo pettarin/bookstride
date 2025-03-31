@@ -40,8 +40,17 @@ class ConfigurePlaybackView extends WatchUi.View {
       }
       mMenuShown = true;
     } else {
-      // NOTE: Popping the view before starting playback causes problems...
-      Media.startPlayback(null);
+      var isbn = Application.Properties.getValue("CURRENT_ISBN");
+      var books = Application.Properties.getValue("BOOKS");
+      if (books != null) {
+        for (var i = 0; i < books.size(); i += 1) {
+          if (books[i]["isbn"] == isbn) {
+            Media.startPlayback(null);
+            return;
+          }
+        }
+      }
+      WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
     }
   }
 
