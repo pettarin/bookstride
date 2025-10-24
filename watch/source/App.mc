@@ -3,6 +3,7 @@ import Toybox.Communications;
 import Toybox.Lang;
 import Toybox.Media;
 import Toybox.WatchUi;
+import Toybox.System;
 
 class App extends Application.AudioContentProviderApp {
   function initialize() {
@@ -17,6 +18,12 @@ class App extends Application.AudioContentProviderApp {
 
   // Get a Media.ContentDelegate for use by the system to get and iterate through media on the device
   function getContentDelegate(arg as PersistableType) as Media.ContentDelegate {
+    if (arg instanceof Lang.Long || arg instanceof Lang.String) {
+      // There's an issue where we don't correctly sync the current ISBN. Happens on device but not on simulator.
+      // This is extra (redundent?) encouragement.
+      DataStore.setCurrentIsbn(arg.toString());
+      DataStore.setCurrentTrack(0);
+    }
     return new ContentDelegate();
   }
 

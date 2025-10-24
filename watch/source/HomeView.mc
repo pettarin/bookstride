@@ -8,24 +8,25 @@ class HomeView extends WatchUi.View {
   function initialize() {
     View.initialize();
   }
-  private var mShownPlayback = false;
   private var mShownSync = false;
 
   function onShow() {
-    var books = Application.Properties.getValue("BOOKS");
+    var books = DataStore.getBooks();
 
-    if (books != null && books.size() != 0 || mShownSync) {
-      if (mShownPlayback) {
+    if (books.size() != 0 || mShownSync) {
+      if (DataStore.getLastViewWasPlayback()) {
+        DataStore.setLastViewWasPlayback(false);
         WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
         return;
       }
+      DataStore.setLastViewWasPlayback(true);
       WatchUi.pushView(
         new ConfigurePlaybackMenu(),
         new ConfigurePlaybackMenuDelegate(),
         WatchUi.SLIDE_IMMEDIATE
       );
-      mShownPlayback = true;
     } else {
+      DataStore.setLastViewWasPlayback(false);
       WatchUi.pushView(new ConfigureSyncView(), null, WatchUi.SLIDE_IMMEDIATE);
       mShownSync = true;
     }

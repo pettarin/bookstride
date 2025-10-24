@@ -7,6 +7,7 @@ using Toybox.Lang;
 class ContentIterator extends Media.ContentIterator {
   private var mTrackIndex = 0;
   private var mTracks = [];
+  private var mIsbn = null;
 
   // Constructor
   function initialize() {
@@ -14,8 +15,17 @@ class ContentIterator extends Media.ContentIterator {
     initializePlaylist();
   }
 
+  function checkNeedsRefresh() {
+    var isbn = DataStore.getCurrentIsbn();
+    if (mIsbn != isbn) {
+      initializePlaylist();
+    }
+  }
+
   // Returns the playback profile
   function getPlaybackProfile() {
+    checkNeedsRefresh();
+
     var profile = new PlaybackProfile();
 
     profile.playbackControls = [
@@ -38,6 +48,8 @@ class ContentIterator extends Media.ContentIterator {
   // Returns the next song, or null if there is no next song. Also increments the current
   // song index.
   function next() {
+    checkNeedsRefresh();
+
     if (mTrackIndex < mTracks.size() - 1) {
       ++mTrackIndex;
       var obj = Media.getCachedContentObj(
@@ -65,6 +77,8 @@ class ContentIterator extends Media.ContentIterator {
 
   // Gets the current song to play
   function get() {
+    checkNeedsRefresh();
+
     var obj = null;
     if (mTrackIndex >= 0 && mTrackIndex < mTracks.size()) {
       obj = Media.getCachedContentObj(
@@ -76,6 +90,8 @@ class ContentIterator extends Media.ContentIterator {
   }
 
   function peekNext() {
+    checkNeedsRefresh();
+
     var nextIndex = mTrackIndex + 1;
     if (nextIndex < mTracks.size()) {
       var obj = Media.getCachedContentObj(
@@ -88,6 +104,8 @@ class ContentIterator extends Media.ContentIterator {
   }
 
   function peekPrevious() {
+    checkNeedsRefresh();
+
     var previousIndex = mTrackIndex - 1;
     if (previousIndex >= 0) {
       var obj = Media.getCachedContentObj(
@@ -112,9 +130,10 @@ class ContentIterator extends Media.ContentIterator {
   function shufflePlaylist() {}
 
   function initializePlaylist() {
-    var isbn = Application.Properties.getValue("CURRENT_ISBN");
-    var books = Application.Properties.getValue("BOOKS");
+    var isbn = DataStore.getCurrentIsbn();
+    var books = DataStore.getBooks();
     mTracks = [];
+    mIsbn = isbn;
     if (books != null) {
       for (var i = 0; i < books.size(); i += 1) {
         if (books[i]["isbn"] == isbn) {
@@ -122,8 +141,8 @@ class ContentIterator extends Media.ContentIterator {
         }
       }
     }
-    var savedIndex = Application.Properties.getValue("CURRENT_TRACK") as Lang.String or Lang.Number or Null;
-    if (savedIndex == null || !(savedIndex instanceof Lang.Number) || savedIndex >= mTracks.size())  {
+    var savedIndex = DataStore.getCurrentTrack();
+    if (savedIndex >= mTracks.size())  {
         mTrackIndex = 0;
     } else {
         mTrackIndex = savedIndex;

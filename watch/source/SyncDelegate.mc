@@ -8,13 +8,15 @@ using Toybox.Timer;
 // Performs the sync with the music provider
 class SyncDelegate extends Communications.SyncDelegate {
   // The list of isbns to sync
-  private var mSyncList as Lang.Array<Lang.String>;
+  private var mSyncList as Lang.Array<Lang.Long>;
   // The list of isbns to delete
-  private var mDeleteList as Lang.Array<Lang.String>;
+  private var mDeleteList as Lang.Array<Lang.Long>;
   // The count of isbns to delete and download
   private var mTotalIsbnsToSync;
-  // The cont of songs that have been deleted or downloaded
+  // The count of songs that have been deleted or downloaded
   private var mBooksSynced;
+
+  private var mBooks as Lang.Array<Book>;
 
   private var mCurrentTrack as Lang.Number = 0;
   private var mTrackCount as Lang.Number = 0;
@@ -24,15 +26,17 @@ class SyncDelegate extends Communications.SyncDelegate {
     SyncDelegate.initialize();
 
     // Get the sync list
-    mSyncList = Application.Properties.getValue("PENDING_SYNC");
-    if (mSyncList == null) {
-      mSyncList = [];
-    }
+    mSyncList = DataStore.getSyncList();
 
     // Get the delete list
-    mDeleteList = Application.Properties.getValue("PENDING_DELETE");
-    if (mDeleteList == null) {
-      mDeleteList = [];
+    mDeleteList = DataStore.getDeleteList();
+
+    var books = DataStore.getBooks();
+
+    // Make a copy so we don't end up in a half-baked state.
+    mBooks = [];
+    for (var i = 0; i < books.size(); i += 1) {
+      mBooks.add(books[i]);
     }
 
     mBooksSynced = 0;
@@ -43,6 +47,13 @@ class SyncDelegate extends Communications.SyncDelegate {
     // Calculate the number of songs to be synced so the
     // progress can be updated properly
     mTotalIsbnsToSync = mSyncList.size() + mDeleteList.size();
+    var books = DataStore.getBooks();
+
+    // Make a copy so we don't end up in a half-baked state.
+    mBooks = [];
+    for (var i = 0; i < books.size(); i += 1) {
+      mBooks.add(books[i]);
+    }
 
     purgeBadMedia();
 
@@ -61,23 +72,27 @@ class SyncDelegate extends Communications.SyncDelegate {
   // Delete newly unsynced books.
   function deleteBooks() {
     // Remove the song from the system
-    var downloadedBooks =
-      Application.Properties.getValue("BOOKS") as Lang.Array<Lang.Dictionary>;
-    if (downloadedBooks == null) {
-      downloadedBooks = [];
-    }
+    var downloadedBooks = DataStore.getBooks();
 
     // Delete each song from the system
     for (var i = 0; i < mDeleteList.size(); i += 1) {
       for (var j = 0; j < downloadedBooks.size(); j += 1) {
         if (downloadedBooks[j]["isbn"] == mDeleteList[i]) {
           for (var k = 0; k < downloadedBooks[j]["tracks"].size(); k += 1) {
-            Media.deleteCachedItem(
+            var obj = Media.getCachedContentObj(
               new Media.ContentRef(
                 downloadedBooks[j]["tracks"][k],
                 Media.CONTENT_TYPE_AUDIO
               )
             );
+            if (obj != null) {
+              Media.deleteCachedItem(
+                new Media.ContentRef(
+                  downloadedBooks[j]["tracks"][k],
+                  Media.CONTENT_TYPE_AUDIO
+                )
+              );
+            }
           }
 
           downloadedBooks.remove(downloadedBooks[j]);
@@ -86,13 +101,15 @@ class SyncDelegate extends Communications.SyncDelegate {
     }
 
     // Remove the delete list from the system
-    Application.Properties.setValue("PENDING_DELETE", []);
-    Application.Properties.setValue("BOOKS", downloadedBooks);
+    DataStore.setDeleteList([]);
   }
 
   // Downloads the next song to be synced
   function syncNextIsbn() {
     if (mSyncList.size() == 0) {
+      DataStore.setDeleteList([]);
+      DataStore.setSyncList([]);
+      DataStore.setBooks(mBooks);
       Communications.notifySyncComplete(null);
       return;
     }
@@ -100,26 +117,19 @@ class SyncDelegate extends Communications.SyncDelegate {
     var token = Application.Properties.getValue("AUTHENTICATION_TOKEN");
     var isbn = mSyncList[0];
 
-    var downloadedBooks =
-      Application.Properties.getValue("BOOKS") as Lang.Array<Lang.Dictionary>?;
-
     var foundBook = false;
-    if (downloadedBooks == null) {
-      downloadedBooks = [];
-    }
-    for (var i = 0; i < downloadedBooks.size(); i += 1) {
-      if (downloadedBooks[i]["isbn"] == isbn) {
+    for (var i = 0; i < mBooks.size(); i += 1) {
+      if (mBooks[i]["isbn"] == isbn) {
         foundBook = true;
-        downloadedBooks[i]["tracks"] = [];
+        mBooks[i]["tracks"] = [];
       }
     }
     if (!foundBook) {
-      downloadedBooks.add({
+      mBooks.add({
         "isbn" => isbn,
         "tracks" => [],
       });
     }
-    Application.Properties.setValue("BOOKS", downloadedBooks);
 
     Communications.makeWebRequest(
       Constants.BOOK_URL + isbn + Constants.START_DOWNLOAD,
@@ -142,12 +152,17 @@ class SyncDelegate extends Communications.SyncDelegate {
       syncNextTrack();
     } else {
       var errorString = "Conversion failed with error code: " + responseCode;
+      DataStore.setDeleteList([]);
+      DataStore.setSyncList([]);
       Communications.notifySyncComplete(errorString);
     }
   }
 
   function syncNextTrack() as Void {
     if (mSyncList.size() == 0) {
+      DataStore.setDeleteList([]);
+      DataStore.setSyncList([]);
+      DataStore.setBooks(mBooks);
       Communications.notifySyncComplete(null);
       return;
     }
@@ -181,22 +196,18 @@ class SyncDelegate extends Communications.SyncDelegate {
     } else if (responseCode == 200) {
       var trackId = (data as Media.ContentRef).getId();
 
-      var downloadedBooks = Application.Properties.getValue("BOOKS");
-      if (downloadedBooks == null) {
-        downloadedBooks = [];
-      }
       var foundBook = false;
-      for (var i = 0; i < downloadedBooks.size(); i += 1) {
-        if (downloadedBooks[i]["isbn"] == mSyncList[0]) {
+      for (var i = 0; i < mBooks.size(); i += 1) {
+        if (mBooks[i]["isbn"] == mSyncList[0]) {
           foundBook = true;
-          downloadedBooks[i]["tracks"].add(trackId);
+          mBooks[i]["tracks"].add(trackId);
         }
       }
       if (!foundBook) {
+        DataStore.setDeleteList([]);
+        DataStore.setSyncList([]);
         Communications.notifySyncComplete("missing ISBN");
       }
-
-      Application.Properties.setValue("BOOKS", downloadedBooks);
 
       // Update the progress
       mCurrentTrack += 1;
@@ -210,6 +221,8 @@ class SyncDelegate extends Communications.SyncDelegate {
       }
     } else {
       var errorString = "error code: " + responseCode;
+      DataStore.setDeleteList([]);
+      DataStore.setSyncList([]);
       Communications.notifySyncComplete(errorString);
     }
   }
@@ -228,31 +241,32 @@ class SyncDelegate extends Communications.SyncDelegate {
   }
 
   function purgeBadMedia() {
-    var downloadedBooks = Application.Properties.getValue("BOOKS");
-    if (downloadedBooks == null) {
-      downloadedBooks = [];
+    var knownTracks = {};
+    var downloadedBooks = DataStore.getBooks();
+    for (var i = 0; i < downloadedBooks.size(); i += 1) {
+      var tracks = downloadedBooks[i]["tracks"];
+      for (var j = 0; j < tracks.size(); j += 1) {
+        knownTracks.put(tracks[j], true);
+      }
     }
 
     // Purge medias without book
-    var medias = Media.getContentRefIter({:contentType => Media.CONTENT_TYPE_AUDIO});
-    if (medias != null) {
-        var media = medias.next();
-        while (media != null) {
-            var found = false;
-            for (var i = 0; i < downloadedBooks.size() && !found; i += 1) {
-              for (var j = 0; j < downloadedBooks[i]["tracks"].size() && !found; j += 1) {
-                if (downloadedBooks[i]["tracks"][j] == media.getId()) {
-                    found = true;
-                }
-              }
-            }
 
-            if (!found) {
-                var ref = new Media.ContentRef(media.getId(), Media.CONTENT_TYPE_AUDIO);
-                Media.deleteCachedItem(ref);
-            }
-            media = medias.next();
+    var medias = Media.getContentRefIter({
+      :contentType => Media.CONTENT_TYPE_AUDIO,
+    });
+    if (medias != null) {
+      var media = medias.next();
+      while (media != null) {
+        if (!knownTracks.hasKey(media.getId())) {
+          var ref = new Media.ContentRef(
+            media.getId(),
+            Media.CONTENT_TYPE_AUDIO
+          );
+          Media.deleteCachedItem(ref);
         }
+        media = medias.next();
+      }
     }
   }
 }

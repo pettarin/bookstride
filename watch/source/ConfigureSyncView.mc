@@ -21,6 +21,8 @@ class ConfigureSyncView extends WatchUi.View {
 
   // When shown, decide if the songs should be fetched or the view popped (when returning from the menu)
   function onShow() {
+    DataStore.setLastViewWasPlayback(false);
+
     // If not authenticated, get authentication first
     var token = Application.Properties.getValue("AUTHENTICATION_TOKEN") as Lang.String or Null;
     if (token == null || token.equals("")) {
@@ -31,6 +33,11 @@ class ConfigureSyncView extends WatchUi.View {
         mShowedOauth = true;
       }
     } else if (mMenuShown) {
+      if (DataStore.getSyncList().size() > 0 || DataStore.getDeleteList().size() > 0) {
+        Communications.startSync();
+        return;
+      }
+
       WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
     } else {
       token = Application.Properties.getValue("AUTHENTICATION_TOKEN");
@@ -100,8 +107,7 @@ class ConfigureSyncView extends WatchUi.View {
     var precheckedItems = {};
 
     // Add in songs on the system to the prechecked list
-    var downloadedBooks =
-      Application.Properties.getValue("BOOKS") as Lang.Array<Lang.Dictionary>?;
+    var downloadedBooks = DataStore.getBooks();
     if (downloadedBooks == null) {
       downloadedBooks = [];
     }
@@ -111,23 +117,13 @@ class ConfigureSyncView extends WatchUi.View {
       precheckedItems[isbn] = true;
     }
 
-    var isbnsToSync =
-      Application.Properties.getValue("PENDING_SYNC") as
-      Lang.Array<Lang.Dictionary>?;
-    if (isbnsToSync == null) {
-      isbnsToSync = [];
-    }
+    var isbnsToSync = DataStore.getSyncList();
 
     for (var idx = 0; idx < isbnsToSync.size(); ++idx) {
       precheckedItems[isbnsToSync[idx]] = true;
     }
 
-    var isbnsToDelete =
-      Application.Properties.getValue("PENDING_DELETE") as
-      Lang.Array<Lang.Dictionary>?;
-    if (isbnsToDelete == null) {
-      isbnsToDelete = [];
-    }
+    var isbnsToDelete = DataStore.getDeleteList();
 
     for (var idx = 0; idx < isbnsToDelete.size(); ++idx) {
       precheckedItems.remove(isbnsToDelete[idx]);

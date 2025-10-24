@@ -10,24 +10,25 @@ class ConfigurePlaybackMenuDelegate extends WatchUi.Menu2InputDelegate {
     Menu2InputDelegate.initialize();
   }
 
-  function onSelect(item) {
-    if (item.getId() == null) {
-      WatchUi.pushView(new ConfigureSyncView(), null, WatchUi.SLIDE_IMMEDIATE);
+  function onSelect(item as Toybox.WatchUi.MenuItem) {
+    var id = item.getId();
+    if (id != null) {
+      DataStore.setCurrentIsbn(id.toString());
+      DataStore.setCurrentTrack(0);
+      DataStore.syncAndPlay();
     } else {
-      Application.Properties.setValue("CURRENT_ISBN", item.getId());
-      Media.startPlayback(null);
+      WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
+      WatchUi.pushView(new ConfigureSyncView(), null, WatchUi.SLIDE_IMMEDIATE);
     }
   }
 
   function onBack() {
-    var isbn = Application.Properties.getValue("CURRENT_ISBN");
-    var books = Application.Properties.getValue("BOOKS");
-    if (books != null) {
-      for (var i = 0; i < books.size(); i += 1) {
-        if (books[i]["isbn"] == isbn) {
-          Media.startPlayback(null);
-          return;
-        }
+    var isbn = DataStore.getCurrentIsbn();
+    var books = DataStore.getBooks();
+    for (var i = 0; i < books.size(); i += 1) {
+      if (books[i]["isbn"] == isbn) {
+        DataStore.syncAndPlay();
+        return;
       }
     }
 

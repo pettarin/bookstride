@@ -35,16 +35,15 @@ class ContentDelegate extends Media.ContentDelegate {
     songEvent as SongEvent,
     playbackPosition as Number or PlaybackPosition
   ) as Void {
-    var downloadedBooks = Application.Properties.getValue("BOOKS");
-    if (downloadedBooks == null) {
-      downloadedBooks = [];
-    }
+    var downloadedBooks = DataStore.getBooks();
 
     for (var i = 0; i < downloadedBooks.size(); i += 1) {
-      for (var j = 0; j < downloadedBooks[i]["tracks"].size(); j += 1) {
-        if (downloadedBooks[i]["tracks"][j] == contentRefId) {
-            Application.Properties.setValue("CURRENT_ISBN", downloadedBooks[i]["isbn"]);
-            Application.Properties.setValue("CURRENT_TRACK", j);
+      var book = downloadedBooks[i];
+      var tracks = book["tracks"];
+      for (var j = 0; j < tracks.size(); j += 1) {
+        if (tracks[j] == contentRefId) {
+          DataStore.setCurrentIsbn(downloadedBooks[i]["isbn"]);
+          DataStore.setCurrentTrack(j);
         }
       }
     }
