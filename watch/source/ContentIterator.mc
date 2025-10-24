@@ -12,6 +12,7 @@ class ContentIterator extends Media.ContentIterator {
   // Constructor
   function initialize() {
     ContentIterator.initialize();
+
     initializePlaylist();
   }
 
@@ -39,7 +40,7 @@ class ContentIterator extends Media.ContentIterator {
 
     profile.attemptSkipAfterThumbsDown = false;
     profile.requirePlaybackNotification = true;
-    profile.playbackNotificationThreshold = 15;
+    profile.playbackNotificationThreshold = 4;
     profile.skipPreviousThreshold = 10;
 
     return profile;
@@ -81,9 +82,11 @@ class ContentIterator extends Media.ContentIterator {
 
     var obj = null;
     if (mTrackIndex >= 0 && mTrackIndex < mTracks.size()) {
-      obj = Media.getCachedContentObj(
-        new Media.ContentRef(mTracks[mTrackIndex], Media.CONTENT_TYPE_AUDIO)
-      );
+      var contentRef = new Media.ContentRef(mTracks[mTrackIndex], Media.CONTENT_TYPE_AUDIO);
+      obj = Media.getCachedContentObj(contentRef);
+      if (obj != null && mIsbn == DataStore.getCurrentIsbn() && mTrackIndex == DataStore.getCurrentTrack()) {
+        obj = new Media.ActiveContent(contentRef, obj.getMetadata(), DataStore.getCurrentPosition());
+      }
     }
 
     return obj;

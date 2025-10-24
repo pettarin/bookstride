@@ -1,6 +1,7 @@
 using Toybox.Application;
 using Toybox.Lang;
 using Toybox.Media;
+using Toybox.System;
 
 typedef Book as {
     :isbn as Lang.Long,
@@ -10,6 +11,7 @@ typedef Book as {
 module DataStore {
   var mIsbn as Lang.String = "";
   var mTrack as Lang.Number = 0;
+  var mPosition as Lang.Number = 0;
   var mBooks as Lang.Array<Book> = [];
   var mSyncList as Lang.Array<Lang.Long> = [];
   var mDeleteList as Lang.Array<Lang.Long> = [];
@@ -33,6 +35,10 @@ module DataStore {
     var track = Application.Properties.getValue("CURRENT_TRACK");
     if (track instanceof Lang.Number) {
       mTrack = track;
+    }
+    var position = Application.Properties.getValue("CURRENT_POSITION");
+    if (position instanceof Lang.Number) {
+      mPosition = position;
     }
     var books = Application.Properties.getValue("BOOKS");
     if (books instanceof Lang.Array) {
@@ -82,6 +88,20 @@ module DataStore {
     maybeInit();
     Application.Properties.setValue("CURRENT_TRACK", track);
     mTrack = track;
+  }
+
+  function getCurrentPosition() as Lang.Number {
+    maybeInit();
+    if (mPosition instanceof Lang.Number) {
+      return mPosition;
+    }
+    return 0;
+  }
+  
+  function setCurrentPosition(position as Lang.Number) {
+    maybeInit();
+    Application.Properties.setValue("CURRENT_POSITION", position);
+    mPosition = position;
   }
 
   function getBooks() as Lang.Array<Book> {

@@ -3,6 +3,7 @@
     <property id="BOOKS" type="array"></property>
     <property id="CURRENT_ISBN" type="string"></property>
     <property id="CURRENT_TRACK" type="number">0</property>
+    <property id="CURRENT_POSITION" type="number">0</property>
     <property id="PENDING_SYNC" type="array"></property>
     <property id="PENDING_DELETE" type="array"></property>
 </properties>

@@ -34,6 +34,7 @@
             <iq:product id="fenix7xpro"/>
             <iq:product id="fenix843mm"/>
             <iq:product id="fenix847mm"/>
+            <iq:product id="fenix8pro47mm"/>
             <iq:product id="fenix8solar47mm"/>
             <iq:product id="fenix8solar51mm"/>
             <iq:product id="fenixe"/>
@@ -53,6 +54,7 @@
             <iq:product id="venu3s"/>
             <iq:product id="venusq2m"/>
             <iq:product id="vivoactive5"/>
+            <iq:product id="vivoactive6"/>
         </iq:products>
         <!--
             Use "Monkey C: Edit Permissions" from the Visual Studio Code command

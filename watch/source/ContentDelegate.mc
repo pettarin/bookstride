@@ -44,8 +44,13 @@ class ContentDelegate extends Media.ContentDelegate {
         if (tracks[j] == contentRefId) {
           DataStore.setCurrentIsbn(downloadedBooks[i]["isbn"]);
           DataStore.setCurrentTrack(j);
+          DataStore.setCurrentPosition(playbackPosition);
         }
       }
     }
+  }
+
+  function syncPosition() {
+
   }
 }

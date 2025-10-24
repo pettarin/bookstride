@@ -78,7 +78,7 @@ class SyncDelegate extends Communications.SyncDelegate {
     for (var i = 0; i < mDeleteList.size(); i += 1) {
       for (var j = 0; j < downloadedBooks.size(); j += 1) {
         if (downloadedBooks[j]["isbn"] == mDeleteList[i]) {
-          for (var k = 0; k < downloadedBooks[j]["tracks"].size(); k += 1) {
+          for (var k = 0; k < (downloadedBooks[j]["tracks"] as Lang.Array).size(); k += 1) {
             var obj = Media.getCachedContentObj(
               new Media.ContentRef(
                 downloadedBooks[j]["tracks"][k],
@@ -200,7 +200,7 @@ class SyncDelegate extends Communications.SyncDelegate {
       for (var i = 0; i < mBooks.size(); i += 1) {
         if (mBooks[i]["isbn"] == mSyncList[0]) {
           foundBook = true;
-          mBooks[i]["tracks"].add(trackId);
+          (mBooks[i]["tracks"] as Lang.Array).add(trackId);
         }
       }
       if (!foundBook) {

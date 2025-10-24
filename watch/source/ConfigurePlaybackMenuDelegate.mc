@@ -13,11 +13,16 @@ class ConfigurePlaybackMenuDelegate extends WatchUi.Menu2InputDelegate {
   function onSelect(item as Toybox.WatchUi.MenuItem) {
     var id = item.getId();
     if (id != null) {
-      DataStore.setCurrentIsbn(id.toString());
-      DataStore.setCurrentTrack(0);
+      if (DataStore.getCurrentIsbn() != id) {
+        DataStore.setCurrentIsbn(id.toString());
+        DataStore.setCurrentTrack(0);
+      }
       DataStore.syncAndPlay();
     } else {
       WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
+      DataStore.setDeleteList([]);
+      DataStore.setSyncList([]);
+      Media.stopPlayback();
       WatchUi.pushView(new ConfigureSyncView(), null, WatchUi.SLIDE_IMMEDIATE);
     }
   }
