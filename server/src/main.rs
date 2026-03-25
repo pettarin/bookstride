@@ -63,6 +63,7 @@ async fn auth(auth: Form<Auth<'_>>) -> Result<Redirect, Unauthorized<Option<Name
     let resp = client
         .post("https://libro.fm/oauth/token")
         .header("User-Agent", "Bookstride <jocelyn@nettek.ca>")
+        .header("X-LibroFm-AppVer", "7.34.8")
         .json(&map)
         .send()
         .await;
