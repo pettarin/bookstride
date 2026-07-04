@@ -52,6 +52,86 @@ struct Upstream {
     limiter: Arc<DirectLimiter>,
 }
 
+/// GoatCounter server-side analytics (optional). Reads `GOATCOUNTER_API_KEY`
+/// from the environment. When absent, no server-side hits are sent.
+///
+/// Each hit is fire-and-forget: we log a warning on failure and move on.
+/// The GoatCounter backend API is rate-limited to 4 requests/second, which
+/// is far more than this app will ever generate.
+#[derive(Clone)]
+struct GoatCounter {
+    api_key: String,
+    endpoint: String,
+    http: reqwest::Client,
+}
+
+impl GoatCounter {
+    /// Create a GoatCounter client if the env var is set; return `None`
+    /// otherwise so the server works fine without any analytics config.
+    fn from_env() -> Option<Self> {
+        let api_key = std::env::var("GOATCOUNTER_API_KEY").ok()?;
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .expect("failed to build GoatCounter HTTP client");
+        info!("GoatCounter server-side analytics enabled");
+        Some(Self {
+            endpoint: "https://bookstride.goatcounter.com/api/v0/count".into(),
+            api_key,
+            http,
+        })
+    }
+
+    /// Send a single event hit to GoatCounter. The `path` is used as-is
+    /// (should be a generic label like `"server/login-success"`). Errors
+    /// are logged as warnings but never propagated, so a transient network
+    /// glitch can't break the request handler.
+    async fn hit(&self, path: &str) {
+        #[derive(Serialize)]
+        #[serde(crate = "rocket::serde")]
+        struct Hit<'a> {
+            path: &'a str,
+            #[serde(rename = "event")]
+            is_event: bool,
+        }
+        #[derive(Serialize)]
+        #[serde(crate = "rocket::serde")]
+        struct Payload<'a> {
+            #[serde(rename = "no_sessions")]
+            no_sessions: bool,
+            hits: &'a [Hit<'a>],
+        }
+
+        let payload = Payload {
+            no_sessions: true,
+            hits: &[Hit {
+                path,
+                is_event: true,
+            }],
+        };
+
+        match self
+            .http
+            .post(&self.endpoint)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    warn!(
+                        "GoatCounter hit {} returned {}",
+                        path,
+                        resp.status()
+                    );
+                }
+            }
+            Err(e) => warn!("GoatCounter hit {} failed: {}", path, e),
+        }
+    }
+}
+
 /// Status codes worth retrying: request timeout, rate limit, and the transient
 /// server errors. (501 Not Implemented is deliberately excluded.)
 fn is_transient(status: StatusCode) -> bool {
@@ -186,6 +266,7 @@ struct Token {
 async fn auth(
     auth: Form<Auth<'_>>,
     up: &State<Upstream>,
+    goatcounter: &State<Option<GoatCounter>>,
 ) -> Result<Redirect, Unauthorized<Option<NamedFile>>> {
     let mut map = HashMap::new();
     map.insert("grant_type", "password");
@@ -220,10 +301,15 @@ async fn auth(
                         NamedFile::open("client/unauthorized.html").await.ok(),
                     ));
                 }
-                Ok(resp) => Ok(Redirect::to(format!(
-                    "/success?token={}",
-                    RawStr::new(&resp.access_token).percent_encode()
-                ))),
+                Ok(resp) => {
+                    if let Some(gc) = &**goatcounter {
+                        gc.hit("server/login-success").await;
+                    }
+                    Ok(Redirect::to(format!(
+                        "/success?token={}",
+                        RawStr::new(&resp.access_token).percent_encode()
+                    )))
+                }
             }
         }
     }
@@ -284,6 +370,7 @@ async fn v0_lib(
     page: usize,
     auth: AuthHeader,
     up: &State<Upstream>,
+    goatcounter: &State<Option<GoatCounter>>,
 ) -> Result<Json<MinimalBooksResponse>, Status> {
     let resp = up
         .send("library", true, |c| {
@@ -306,23 +393,28 @@ async fn v0_lib(
                     eprintln!("unknown json {:?}", _e);
                     Err(Status::InternalServerError)
                 }
-                Ok(resp) => Ok(Json(MinimalBooksResponse {
-                    res: resp
-                        .audiobooks
-                        .into_iter()
-                        .map(|book| MinimalBook {
-                            title: book.title,
-                            author1: book
-                                .authors
-                                .first()
-                                .map(|s| s as &str)
-                                .unwrap_or("(missing)")
-                                .to_string(),
-                            isbn: book.isbn,
-                        })
-                        .collect(),
-                    more: resp.total_pages > resp.page,
-                })),
+                Ok(resp) => {
+                    if let Some(gc) = &**goatcounter {
+                        gc.hit("server/library-list").await;
+                    }
+                    Ok(Json(MinimalBooksResponse {
+                        res: resp
+                            .audiobooks
+                            .into_iter()
+                            .map(|book| MinimalBook {
+                                title: book.title,
+                                author1: book
+                                    .authors
+                                    .first()
+                                    .map(|s| s as &str)
+                                    .unwrap_or("(missing)")
+                                    .to_string(),
+                                isbn: book.isbn,
+                            })
+                            .collect(),
+                        more: resp.total_pages > resp.page,
+                    }))
+                }
             }
         }
     }
@@ -361,6 +453,7 @@ async fn v0_start_download(
     auth: AuthHeader,
     db: &Db,
     up: &State<Upstream>,
+    goatcounter: &State<Option<GoatCounter>>,
 ) -> Result<Accepted<Json<DownloadInfo>>, Status> {
     let resp = up
         .send("download-manifest", true, |c| {
@@ -448,6 +541,9 @@ async fn v0_start_download(
                         eprintln!("err: {:?}", e);
                         return Err(Status::InternalServerError);
                     }
+                    if let Some(gc) = &**goatcounter {
+                        gc.hit("server/download-start").await;
+                    }
                     Ok(Accepted(Json(DownloadInfo {
                         tracks: resp.tracks.len(),
                     })))
@@ -510,6 +606,7 @@ async fn run_audio_downloads(rocket: Rocket<Build>) -> fairing::Result {
         Some(up) => up.clone(),
         None => return Err(rocket),
     };
+    let gc: Option<GoatCounter> = rocket.state::<Option<GoatCounter>>().and_then(|o| o.clone());
 
     rocket::tokio::task::spawn(async move {
         loop {
@@ -660,6 +757,9 @@ async fn run_audio_downloads(rocket: Rocket<Build>) -> fairing::Result {
                             first.isbn,
                             track_file_ids.len()
                         );
+                        if let Some(ref gc) = gc {
+                            gc.hit("server/download-complete").await;
+                        }
                     } else {
                         // Give up on this job rather than wedge the queue or
                         // leave phantom "ready" tracks. Drop its rows entirely;
@@ -721,6 +821,7 @@ async fn rocket() -> _ {
     rocket
         .configure(figment)
         .manage(Upstream::new())
+        .manage(GoatCounter::from_env())
         .attach(Db::init())
         .attach(migrations_fairing)
         .attach(downloads_fairing)
@@ -741,7 +842,7 @@ async fn rocket() -> _ {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     // An Upstream with an effectively-unlimited limiter, so tests exercise the
@@ -842,5 +943,81 @@ mod tests {
     fn retry_after_parses_numeric_and_caps() {
         // Pure-value check on the cap constant and parsing intent.
         assert_eq!(RETRY_AFTER_CAP, Duration::from_secs(120));
+    }
+
+    // ------------------------------------------------------------------
+    // GoatCounter analytics
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn goatcounter_from_env_absent() {
+        // GOATCOUNTER_API_KEY is not set in the test environment.
+        assert!(GoatCounter::from_env().is_none());
+    }
+
+    #[tokio::test]
+    async fn goatcounter_hit_sends_correct_request() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v0/count"))
+            .and(header("Authorization", "Bearer test-api-key"))
+            .and(body_partial_json(serde_json::json!({
+                "no_sessions": true,
+                "hits": [{
+                    "path": "test/event",
+                    "event": true
+                }]
+            })))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let gc = GoatCounter {
+            api_key: "test-api-key".into(),
+            endpoint: format!("{}/api/v0/count", server.uri()),
+            http: reqwest::Client::new(),
+        };
+
+        gc.hit("test/event").await;
+
+        // Verify the mock was hit exactly once.
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn goatcounter_hit_logs_non_200() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v0/count"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let gc = GoatCounter {
+            api_key: "test".into(),
+            endpoint: format!("{}/api/v0/count", server.uri()),
+            http: reqwest::Client::new(),
+        };
+
+        // Should not panic; hit() logs a warning internally.
+        gc.hit("test/server-error").await;
+
+        let hits = server.received_requests().await.unwrap().len();
+        assert_eq!(hits, 1);
+    }
+
+    #[tokio::test]
+    async fn goatcounter_hit_does_not_panic_on_transport_error() {
+        // Point at an unused port — connection refused is fine.
+        let gc = GoatCounter {
+            api_key: "test".into(),
+            endpoint: "http://127.0.0.1:1/api/v0/count".into(),
+            http: reqwest::Client::new(),
+        };
+
+        // Should not panic; hit() logs a warning internally.
+        gc.hit("test/transport-error").await;
     }
 }

@@ -2335,6 +2335,7 @@ dependencies = [
  "reqwest",
  "rocket",
  "rocket_db_pools",
+ "serde_json",
  "sqlx",
  "tokio",
  "wiremock",

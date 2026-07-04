@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link href="./output.css" rel="stylesheet" />
+    <!--
+      GoatCounter pageview on /success. We override window.goatcounter.path
+      before the script loads so count.js sends /success instead of the real
+      path (/success?token=...), avoiding leaking the auth token in analytics.
+    -->
+    <script>
+      window.goatcounter = { path: "/success" };
+    </script>
+    <script
+      data-goatcounter="https://bookstride.goatcounter.com/count"
+      async
+      src="//gc.zgo.at/count.js"
+    ></script>
   </head>
   <body>
     <div class="w-96 mx-auto mt-4 p-2">
