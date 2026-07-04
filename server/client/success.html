@@ -5,18 +5,40 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link href="./output.css" rel="stylesheet" />
     <!--
-      GoatCounter pageview on /success. We override window.goatcounter.path
-      before the script loads so count.js sends /success instead of the real
-      path (/success?token=...), avoiding leaking the auth token in analytics.
+      GoatCounter pageview on /success. count.js always sends location.search
+      in its own `q` field — which on this page carries ?token=..., so we
+      suppress it. Approach:
+
+       1. Set no_onload so count.js doesn't auto-fire a hit during load.
+       2. On script load, wrap get_data to delete the `q` field.
+       3. Then manually call count() for the pageview.
+
+      This matches the pattern hacklily uses in analytics.ts.
     -->
     <script>
-      window.goatcounter = { path: "/success" };
+      window.goatcounter = { no_onload: true, path: "/success" };
     </script>
     <script
       data-goatcounter="https://bookstride.goatcounter.com/count"
       async
       src="//gc.zgo.at/count.js"
     ></script>
+    <script>
+      var s = document.querySelector(
+        'script[data-goatcounter="https://bookstride.goatcounter.com/count"]'
+      );
+      s.addEventListener("load", function () {
+        var orig = window.goatcounter.get_data;
+        if (orig) {
+          window.goatcounter.get_data = function (vars) {
+            var data = orig(vars);
+            delete data.q;
+            return data;
+          };
+        }
+        window.goatcounter.count();
+      });
+    </script>
   </head>
   <body>
     <div class="w-96 mx-auto mt-4 p-2">
