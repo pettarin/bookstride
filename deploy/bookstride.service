@@ -1,0 +1,52 @@
+# systemd *user* unit for the Bookstride server: a Rocket app that
+# proxies the libro.fm API for the Connect IQ watch app.
+#
+# Install with deploy/install.sh, which builds the server, copies the
+# binary and client/ assets into ~/.local/share/bookstride (this unit's
+# WorkingDirectory), and copies this file to
+# ~/.config/systemd/user/bookstride.service. Run
+# `systemctl --user daemon-reload` after editing.
+#
+# Tunables live in ~/.config/bookstride/env (see deploy/env.example);
+# they are injected via EnvironmentFile=. There are no application
+# secrets: the server forwards each user's libro.fm credentials at
+# request time and stores none.
+#
+# Restarting the service just re-runs the installed binary. To rebuild
+# from the repo and restart in one step, run `bookstride-update`
+# (installed by install.sh from deploy/update.sh).
+
+[Unit]
+Description=Bookstride server (libro.fm proxy for the Connect IQ app)
+After=network-online.target
+Wants=network-online.target
+# Crash-recovery burst: a little slack over the systemd default 5-in-10s
+# so a flaky start doesn't trip the limiter. (These directives belong in
+# [Unit], not [Service].)
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=exec
+WorkingDirectory=%h/.local/share/bookstride
+EnvironmentFile=%h/.config/bookstride/env
+ExecStart=%h/.local/share/bookstride/server
+
+# Restart on a non-zero exit or death by signal. A clean exit after
+# `systemctl --user stop` (SIGTERM -> exit 0) is not a failure, so stop
+# does not loop.
+Restart=on-failure
+RestartSec=3
+
+# The audio-cache files the server drops in /tmp
+# (/tmp/bookstride_cache_*.mp3) are private to the service and cleared
+# on restart, so they never litter the host's /tmp.
+PrivateTmp=true
+NoNewPrivileges=true
+
+KillSignal=SIGTERM
+FinalKillSignal=SIGKILL
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target
