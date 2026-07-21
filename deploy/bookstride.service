@@ -38,13 +38,9 @@ ExecStart=%h/.local/share/bookstride/server
 Restart=on-failure
 RestartSec=3
 
-# My lazy attempt at cache control.
-RuntimeMaxSec=8h
-
-# The audio-cache files the server drops in /tmp
-# (/tmp/bookstride_cache_*.mp3) are private to the service and cleared
-# on restart, so they never litter the host's /tmp.
-TemporaryFileSystem=/tmp:size=10G,mode=1777
+# The audio cache lives in ~/bookstride-cache (see deploy/env.example's
+# MAX_MEDIA_SIZE). It persists across restarts and is pruned in place by
+# the server, so there is no need to wipe /tmp on a timer.
 NoNewPrivileges=true
 
 KillSignal=SIGTERM

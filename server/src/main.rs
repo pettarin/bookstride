@@ -6,6 +6,7 @@ use std::{
     fs::File,
     io::{self, Cursor},
     num::NonZeroU32,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -42,6 +43,15 @@ const MAX_ATTEMPTS: u32 = 5;
 /// Never wait longer than this for a server-supplied `Retry-After`, so a
 /// hostile or buggy value can't wedge a request indefinitely.
 const RETRY_AFTER_CAP: Duration = Duration::from_secs(120);
+
+/// Default cap for the on-disk media cache (`MAX_MEDIA_SIZE` env var
+/// overrides it). When the cache grows past this, the download worker
+/// deletes the oldest media files before fetching new ones.
+const DEFAULT_MAX_MEDIA_SIZE: u64 = 3 * 1024 * 1024 * 1024;
+
+/// Directory (under the user's home) where downloaded `.mp3` parts are
+/// cached. Created on startup if missing.
+const MEDIA_CACHE_DIRNAME: &str = "bookstride-cache";
 
 /// Shared HTTP client + rate limiter for talking to libro.fm. Cloning is cheap
 /// (an `Arc` plus reqwest's internal `Arc`), so it lives in Rocket managed
@@ -553,8 +563,142 @@ async fn v0_start_download(
     }
 }
 
-fn get_tmp_path(file_id: i64) -> String {
-    format!("/tmp/bookstride_cache_{}.mp3", file_id)
+/// Resolve the media cache directory (`$HOME/bookstride-cache`). Falls
+/// back to a `bookstride-cache` directory in the current working
+/// directory if `$HOME` is unset, which should only happen in unusual
+/// test environments.
+fn media_cache_dir() -> PathBuf {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() => PathBuf::from(home).join(MEDIA_CACHE_DIRNAME),
+        _ => PathBuf::from(MEDIA_CACHE_DIRNAME),
+    }
+}
+
+/// Create the media cache directory if it doesn't already exist. Logs a
+/// warning on failure but does not panic, so a misconfigured home still
+/// lets the server start (downloads will fail per-file instead).
+fn ensure_media_cache_dir() {
+    let dir = media_cache_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        warn!("could not create media cache dir {}: {}", dir.display(), e);
+    }
+}
+
+/// Path for a single cached media part.
+fn get_media_path(file_id: i64) -> PathBuf {
+    media_cache_dir().join(format!("bookstride_cache_{}.mp3", file_id))
+}
+
+/// Parse the `MAX_MEDIA_SIZE` env var into a byte count. Accepts a bare
+/// integer (bytes) or a number with a unit suffix: `K`/`KB`, `M`/`MB`,
+/// `G`/`GB`, `T`/`TB` (case-insensitive). Uses binary multiples
+/// (1G = 1024^3). Falls back to [`DEFAULT_MAX_MEDIA_SIZE`] on any parse
+/// error or missing var.
+fn max_media_size() -> u64 {
+    let raw = match std::env::var("MAX_MEDIA_SIZE") {
+        Ok(v) => v,
+        Err(_) => return DEFAULT_MAX_MEDIA_SIZE,
+    };
+    parse_size(&raw).unwrap_or_else(|e| {
+        warn!(
+            "invalid MAX_MEDIA_SIZE {:?} ({}); using default {}",
+            raw, e, DEFAULT_MAX_MEDIA_SIZE
+        );
+        DEFAULT_MAX_MEDIA_SIZE
+    })
+}
+
+/// Parse a human-friendly size string into bytes. See [`max_media_size`].
+fn parse_size(s: &str) -> Result<u64, String> {
+    let trimmed = s.trim();
+    let (digits, rest) = trimmed
+        .split_at(
+            trimmed
+                .find(|c: char| !c.is_ascii_digit() && c != '.' )
+                .unwrap_or(trimmed.len()),
+        );
+    let num: f64 = digits
+        .parse()
+        .map_err(|_| format!("no leading number in {s:?}"))?;
+    if num < 0.0 {
+        return Err(format!("negative size in {s:?}"));
+    }
+    let unit = rest.trim().to_ascii_lowercase();
+    let unit = unit.trim_end_matches('b');
+    let mult: f64 = match unit {
+        "" => 1.0,
+        "k" => 1024.0,
+        "m" => 1024.0 * 1024.0,
+        "g" => 1024.0 * 1024.0 * 1024.0,
+        "t" => 1024.0f64 * 1024.0 * 1024.0 * 1024.0,
+        other => return Err(format!("unknown unit {:?} in {s:?}", other)),
+    };
+    Ok((num * mult) as u64)
+}
+
+/// If the media cache exceeds `max_bytes`, delete the oldest media files
+/// (by modification time) to make room. At most 10 files are removed per
+/// call, and only when the total is over the threshold — so this is safe
+/// to invoke before every part fetch. Errors are logged and swallowed:
+/// a cache prune failure must not abort a download.
+fn prune_media_cache(max_bytes: u64) {
+    let dir = media_cache_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) => {
+            // ENOENT is harmless (nothing to prune); anything else is
+            // worth a log line.
+            if e.kind() != io::ErrorKind::NotFound {
+                warn!("prune: cannot read {}: {}", dir.display(), e);
+            }
+            return;
+        }
+    };
+
+    // Collect (path, size, mtime) for files matching our naming scheme.
+    let mut files: Vec<(PathBuf, u64, SystemTime)> = Vec::new();
+    let mut total: u64 = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if !name.starts_with("bookstride_cache_") || !name.ends_with(".mp3") {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let size = meta.len();
+        let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        total += size;
+        files.push((path, size, mtime));
+    }
+
+    if total <= max_bytes {
+        return;
+    }
+
+    // Oldest first (by mtime; ties broken by path for determinism).
+    files.sort_by(|a, b| {
+        a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0))
+    });
+
+    let to_remove = files.len().min(10);
+    info!(
+        "media cache {} bytes > limit {} bytes; removing {} oldest file(s)",
+        total, max_bytes, to_remove
+    );
+    for (path, _, _) in files.iter().take(to_remove) {
+        if let Err(e) = std::fs::remove_file(path) {
+            warn!("prune: could not remove {}: {}", path.display(), e);
+        }
+    }
 }
 
 #[get("/v0/book/<isbn>/<track>/track.mp3")]
@@ -572,7 +716,7 @@ async fn v0_get_download(
     );
     if let Ok(file) = file.fetch_one(&**db).await {
         if file.ready {
-            match std::fs::read(get_tmp_path(file.file_id)) {
+            match std::fs::read(get_media_path(file.file_id)) {
                 Ok(data) => Ok(data),
                 Err(_) => Err(Status::NotFound),
             }
@@ -607,6 +751,9 @@ async fn run_audio_downloads(rocket: Rocket<Build>) -> fairing::Result {
         None => return Err(rocket),
     };
     let gc: Option<GoatCounter> = rocket.state::<Option<GoatCounter>>().and_then(|o| o.clone());
+    let max_bytes = max_media_size();
+
+    ensure_media_cache_dir();
 
     rocket::tokio::task::spawn(async move {
         loop {
@@ -654,6 +801,10 @@ async fn run_audio_downloads(rocket: Rocket<Build>) -> fairing::Result {
                             Some(path) => path,
                             None => continue,
                         };
+
+                        // Make room before fetching: if the cache is over
+                        // its limit, drop the oldest media files first.
+                        prune_media_cache(max_bytes);
 
                         let resp = match up.send("download", false, |c| c.get(path.as_str())).await
                         {
@@ -715,13 +866,13 @@ async fn run_audio_downloads(rocket: Rocket<Build>) -> fairing::Result {
                                 break 'parts;
                             };
 
-                            let outpath = get_tmp_path(*file_id);
+                            let outpath = get_media_path(*file_id);
                             let write = File::create(&outpath)
                                 .and_then(|mut out| io::copy(&mut file, &mut out).map(|_| ()));
                             if let Err(e) = write {
                                 error!(
                                     "[download] isbn {} failed writing {}: {}",
-                                    first.isbn, outpath, e
+                                    first.isbn, outpath.display(), e
                                 );
                                 failed = true;
                                 break 'parts;
@@ -772,7 +923,7 @@ async fn run_audio_downloads(rocket: Rocket<Build>) -> fairing::Result {
                             track_file_ids.len()
                         );
                         for file_id in &track_file_ids {
-                            let _ = std::fs::remove_file(get_tmp_path(*file_id));
+                            let _ = std::fs::remove_file(get_media_path(*file_id));
                         }
                         sqlx::query!(
                             "DELETE FROM track WHERE isbn = ? AND bearer = ?",
@@ -1019,5 +1170,95 @@ mod tests {
 
         // Should not panic; hit() logs a warning internally.
         gc.hit("test/transport-error").await;
+    }
+
+    #[test]
+    fn parse_size_accepts_units() {
+        assert_eq!(parse_size("0").unwrap(), 0);
+        assert_eq!(parse_size("1024").unwrap(), 1024);
+        assert_eq!(parse_size("1K").unwrap(), 1024);
+        assert_eq!(parse_size("1KB").unwrap(), 1024);
+        assert_eq!(parse_size("1M").unwrap(), 1024 * 1024);
+        assert_eq!(parse_size("2GB").unwrap(), 2 * 1024 * 1024 * 1024);
+        assert_eq!(parse_size("3G").unwrap(), 3 * 1024 * 1024 * 1024);
+        assert_eq!(parse_size("1T").unwrap(), 1024u64 * 1024 * 1024 * 1024);
+        // whitespace and case-insensitive
+        assert_eq!(parse_size("  500 MB ").unwrap(), 500 * 1024 * 1024);
+        assert_eq!(parse_size("3gb").unwrap(), 3 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn parse_size_rejects_garbage() {
+        assert!(parse_size("abc").is_err());
+        assert!(parse_size("-1").is_err());
+        assert!(parse_size("1XB").is_err());
+    }
+
+    #[test]
+    fn max_media_size_defaults_when_unset() {
+        // Make sure no override leaks in from the test runner env.
+        std::env::remove_var("MAX_MEDIA_SIZE");
+        assert_eq!(max_media_size(), DEFAULT_MAX_MEDIA_SIZE);
+    }
+
+    /// `prune_media_cache` against a throwaway temp directory: point HOME
+    /// at it so `media_cache_dir()` resolves there, write a few files, and
+    /// confirm only the oldest 10 get removed when over the limit.
+    #[test]
+    fn prune_removes_oldest_when_over_limit() {
+        let tmp = std::env::temp_dir().join(format!(
+            "bookstride-prune-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let cache = tmp.join(MEDIA_CACHE_DIRNAME);
+        std::fs::create_dir_all(&cache).unwrap();
+
+        std::env::set_var("HOME", &tmp);
+        assert_eq!(media_cache_dir(), cache);
+
+        // Write 12 files of 100 bytes each = 1200 bytes total. Each gets
+        // a distinct mtime so ordering is deterministic.
+        for i in 0..12u64 {
+            let p = cache.join(format!("bookstride_cache_{}.mp3", i));
+            std::fs::write(&p, vec![0u8; 100]).unwrap();
+            // Backdate older files so file 0 is the oldest.
+            let secs = 1_700_000_000 + i;
+            let _ = filetime::set_file_mtime(
+                &p,
+                filetime::FileTime::from_unix_time(secs as i64, 0),
+            );
+        }
+        // Also drop an unrelated file that must be ignored.
+        std::fs::write(cache.join("notes.txt"), b"ignore me").unwrap();
+
+        // Limit of 500 bytes: 1200 > 500, so oldest 10 removed.
+        prune_media_cache(500);
+
+        let remaining: Vec<String> = std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().map(String::from))
+            .filter(|n| n.starts_with("bookstride_cache_"))
+            .collect();
+        assert_eq!(remaining.len(), 2, "expected 2 survivors, got {remaining:?}");
+        // Files 10 and 11 should survive (they had the newest mtimes).
+        assert!(remaining.iter().any(|n| n.contains("_10.")));
+        assert!(remaining.iter().any(|n| n.contains("_11.")));
+        // The unrelated file is untouched.
+        assert!(cache.join("notes.txt").exists());
+
+        // Under the limit: no-op.
+        prune_media_cache(10 * 1024);
+        let still: Vec<_> = std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().map(String::from))
+            .filter(|n| n.starts_with("bookstride_cache_"))
+            .collect();
+        assert_eq!(still.len(), 2);
+
+        std::env::remove_var("HOME");
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 }

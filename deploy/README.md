@@ -167,8 +167,11 @@ already-installed binary; only `bookstride-update` rebuilds.
   `ROCKET_ADDRESS=127.0.0.1` explicitly so it can't drift. The listen
   port is fixed at 8000 by the app itself.
 - **Audio cache.** The server extracts downloaded tracks to
-  `/tmp/bookstride_cache_*.mp3`. The unit sets uses a private tmp
-  so restarting wipes everything.
+  `~/bookstride-cache/bookstride_cache_*.mp3` (created on startup if
+  missing). The directory is pruned in place: before each new part is
+  fetched, if the cache exceeds `MAX_MEDIA_SIZE` (default 3 GB) the 10
+  oldest files are deleted. Set `MAX_MEDIA_SIZE` in the env file to tune
+  the cap (e.g. `5GB`, `500MB`, or a bare byte count).
 - **SELinux.** `install.sh` labels `tcp/8000` as `http_port_t` so nginx
   (running as `httpd_t`) is allowed to proxy to it under enforcing mode.
 - **A single instance serves both hostnames.** If you later want the
