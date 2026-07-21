@@ -38,10 +38,13 @@ ExecStart=%h/.local/share/bookstride/server
 Restart=on-failure
 RestartSec=3
 
+# My lazy attempt at cache control.
+RuntimeMaxSec=8h
+
 # The audio-cache files the server drops in /tmp
 # (/tmp/bookstride_cache_*.mp3) are private to the service and cleared
 # on restart, so they never litter the host's /tmp.
-PrivateTmp=true
+TemporaryFileSystem=/tmp:size=10G,mode=1777
 NoNewPrivileges=true
 
 KillSignal=SIGTERM
