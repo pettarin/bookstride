@@ -167,10 +167,8 @@ already-installed binary; only `bookstride-update` rebuilds.
   `ROCKET_ADDRESS=127.0.0.1` explicitly so it can't drift. The listen
   port is fixed at 8000 by the app itself.
 - **Audio cache.** The server extracts downloaded tracks to
-  `/tmp/bookstride_cache_*.mp3`. The unit sets `PrivateTmp=true`, so
-  those files are private to the service and cleared on restart (a
-  restart therefore invalidates in-flight downloads — the watch re-syncs
-  on the resulting 404, same as after a reboot).
+  `/tmp/bookstride_cache_*.mp3`. The unit sets uses a private tmp
+  so restarting wipes everything.
 - **SELinux.** `install.sh` labels `tcp/8000` as `http_port_t` so nginx
   (running as `httpd_t`) is allowed to proxy to it under enforcing mode.
 - **A single instance serves both hostnames.** If you later want the
