@@ -78,7 +78,7 @@ class ConfigureSyncView extends WatchUi.View {
       mSongs = data["res"];
       pushSyncMenu();
     } else if (responseCode == 401) {
-      Application.Properties.setValue("AUTHENTICATION_TOKEN", null);
+      Application.Properties.setValue("AUTHENTICATION_TOKEN", "");
       WatchUi.pushView(new OauthView(), null, WatchUi.SLIDE_IMMEDIATE);
       mShowedOauth = true;
     } else {
