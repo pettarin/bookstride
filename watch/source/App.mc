@@ -14,7 +14,10 @@ class App extends Application.AudioContentProviderApp {
   function onStart(state as Dictionary?) as Void {}
 
   // onStop() is called when your application is exiting
-  function onStop(state as Dictionary?) as Void {}
+  function onStop(state as Dictionary?) as Void {
+    // Last chance to flush a position that failed to push earlier.
+    PositionSync.flushPending();
+  }
 
   // Get a Media.ContentDelegate for use by the system to get and iterate through media on the device
   function getContentDelegate(arg as PersistableType) as Media.ContentDelegate {

@@ -7,31 +7,31 @@ use std::{
     io::{self, Cursor},
     num::NonZeroU32,
     path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant, SystemTime},
 };
 
 use governor::{
+    Jitter, Quota, RateLimiter,
     clock::DefaultClock,
     state::{InMemoryState, NotKeyed},
-    Jitter, Quota, RateLimiter,
 };
 use reqwest::StatusCode;
 use rocket::{
+    Build, Config, Request, Rocket, State,
     fairing::{self, AdHoc},
     form::Form,
     fs::NamedFile,
     http::{RawStr, Status},
     request::{FromRequest, Outcome},
     response::{
-        status::{Accepted, Unauthorized},
         Redirect,
+        status::{Accepted, Unauthorized},
     },
-    serde::{json::Json, Deserialize, Serialize},
+    serde::{Deserialize, Serialize, json::Json},
     tokio::time::sleep,
-    Build, Config, Request, Rocket, State,
 };
-use rocket_db_pools::{sqlx, Database};
+use rocket_db_pools::{Database, sqlx};
 
 /// A keyless, in-memory (process-global) rate limiter, shared across every
 /// request handler and the background download worker.
@@ -52,6 +52,14 @@ const DEFAULT_MAX_MEDIA_SIZE: u64 = 3 * 1024 * 1024 * 1024;
 /// Directory (under the user's home) where downloaded `.mp3` parts are
 /// cached. Created on startup if missing.
 const MEDIA_CACHE_DIRNAME: &str = "bookstride-cache";
+
+/// libro.fm API version used by the position endpoints
+const LIBRO_API_VERSION: &str = "v12";
+
+/// TTL for the per-token library-position cache backing
+/// `GET /v0/position/<isbn>`; repeated app-open checks inside the window
+/// reuse one library dump instead of re-paginating libro.fm.
+const POSITION_CACHE_TTL: Duration = Duration::from_secs(10);
 
 /// Shared HTTP client + rate limiter for talking to libro.fm. Cloning is cheap
 /// (an `Arc` plus reqwest's internal `Arc`), so it lives in Rocket managed
@@ -130,11 +138,7 @@ impl GoatCounter {
         {
             Ok(resp) => {
                 if !resp.status().is_success() {
-                    warn!(
-                        "GoatCounter hit {} returned {}",
-                        path,
-                        resp.status()
-                    );
+                    warn!("GoatCounter hit {} returned {}", path, resp.status());
                 }
             }
             Err(e) => warn!("GoatCounter hit {} failed: {}", path, e),
@@ -331,6 +335,36 @@ struct MinimalBook {
     title: String,
     author1: String,
     isbn: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    track_index: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    track_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_touched_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(crate = "rocket::serde")]
+struct LibroUserMetadata {
+    #[serde(default)]
+    changed_at: Option<String>,
+    #[serde(default, rename = "last_touched_at")]
+    last_touched_at: Option<String>,
+    #[serde(default, rename = "track_index")]
+    track_index: Option<i64>,
+    #[serde(default, rename = "track_seconds")]
+    track_seconds: Option<f64>,
+    #[serde(default)]
+    finished: Option<bool>,
+    /// Parsed but unused for now; kept so the struct mirrors the API and
+    /// the watch can request it later without a schema change.
+    #[allow(dead_code)]
+    #[serde(default)]
+    hidden: Option<bool>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -339,6 +373,8 @@ struct LibroBook {
     title: String,
     authors: Vec<String>,
     isbn: i64,
+    #[serde(default)]
+    user_metadata: Option<LibroUserMetadata>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -355,6 +391,98 @@ struct MinimalBooksResponse {
     res: Vec<MinimalBook>,
     more: bool,
 }
+
+/// Formats a `SystemTime` as UTC ISO-8601 with millisecond precision,
+/// matching libro.fm's `ApiDateFormat`: `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`
+/// (e.g. `2026-09-15T13:44:12.345Z`). Hand-rolled civil-date conversion
+/// (Howard Hinnant's civil_from_days) to avoid a chrono dependency.
+fn iso8601_millis(t: SystemTime) -> String {
+    let millis = t
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_millis() as i64;
+    let days = millis.div_euclid(86_400_000);
+    let ms_of_day = millis.rem_euclid(86_400_000);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    let (hh, mm, ss, mmm) = (
+        ms_of_day / 3_600_000,
+        (ms_of_day / 60_000) % 60,
+        (ms_of_day / 1000) % 60,
+        ms_of_day % 1000,
+    );
+    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{mmm:03}Z")
+}
+
+/// libro.fm API base URL for the position endpoints. Injectable so tests
+/// can point at a mock server.
+#[derive(Clone)]
+struct LibroApi {
+    base: Arc<String>,
+}
+
+impl Default for LibroApi {
+    fn default() -> Self {
+        Self::with_base("https://libro.fm")
+    }
+}
+
+impl LibroApi {
+    fn with_base(base: &str) -> Self {
+        Self {
+            base: Arc::new(base.to_string()),
+        }
+    }
+
+    fn base(&self) -> &str {
+        &self.base
+    }
+}
+
+/// A book's server-side listening position, as stored in the
+/// `user_metadata` of a library entry. All fields optional: books never
+/// played anywhere have none.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(crate = "rocket::serde")]
+struct BookPosition {
+    isbn: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    track_index: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    track_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_touched_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished: Option<bool>,
+}
+
+impl BookPosition {
+    fn from_book(book: LibroBook) -> Self {
+        let m = book.user_metadata;
+        Self {
+            isbn: book.isbn,
+            track_index: m.as_ref().and_then(|m| m.track_index),
+            track_seconds: m.as_ref().and_then(|m| m.track_seconds),
+            changed_at: m.as_ref().and_then(|m| m.changed_at.clone()),
+            last_touched_at: m.as_ref().and_then(|m| m.last_touched_at.clone()),
+            finished: m.as_ref().and_then(|m| m.finished),
+        }
+    }
+}
+
+/// Per-bearer cache of library position dumps (see `POSITION_CACHE_TTL`).
+#[derive(Default)]
+struct PositionCache(Mutex<HashMap<String, (Instant, Vec<BookPosition>)>>);
 
 struct AuthHeader {
     header: String,
@@ -380,12 +508,18 @@ async fn v0_lib(
     page: usize,
     auth: AuthHeader,
     up: &State<Upstream>,
+    api: &State<LibroApi>,
     goatcounter: &State<Option<GoatCounter>>,
 ) -> Result<Json<MinimalBooksResponse>, Status> {
     let resp = up
         .send("library", true, |c| {
-            c.get(format!("https://libro.fm/api/v7/library?page={}", page))
-                .header("Authorization", &auth.header)
+            c.get(format!(
+                "{}/api/{}/library?page={}",
+                api.base(),
+                LIBRO_API_VERSION,
+                page
+            ))
+            .header("Authorization", &auth.header)
         })
         .await;
 
@@ -411,15 +545,25 @@ async fn v0_lib(
                         res: resp
                             .audiobooks
                             .into_iter()
-                            .map(|book| MinimalBook {
-                                title: book.title,
-                                author1: book
-                                    .authors
-                                    .first()
-                                    .map(|s| s as &str)
-                                    .unwrap_or("(missing)")
-                                    .to_string(),
-                                isbn: book.isbn,
+                            .map(|book| {
+                                let m = book.user_metadata;
+                                MinimalBook {
+                                    title: book.title,
+                                    author1: book
+                                        .authors
+                                        .first()
+                                        .map(|s| s as &str)
+                                        .unwrap_or("(missing)")
+                                        .to_string(),
+                                    isbn: book.isbn,
+                                    track_index: m.as_ref().and_then(|m| m.track_index),
+                                    track_seconds: m.as_ref().and_then(|m| m.track_seconds),
+                                    changed_at: m.as_ref().and_then(|m| m.changed_at.clone()),
+                                    last_touched_at: m
+                                        .as_ref()
+                                        .and_then(|m| m.last_touched_at.clone()),
+                                    finished: m.as_ref().and_then(|m| m.finished),
+                                }
                             })
                             .collect(),
                         more: resp.total_pages > resp.page,
@@ -428,6 +572,229 @@ async fn v0_lib(
             }
         }
     }
+}
+
+/// Payload for `POST /v0/position`: the watch's latest position for one
+/// book. `track_index` is zero-indexed and `track_seconds` is seconds
+/// within that track, exactly as libro.fm stores them.
+#[derive(Deserialize, Debug)]
+#[serde(crate = "rocket::serde")]
+struct PositionIn {
+    isbn: i64,
+    #[serde(rename = "track_index")]
+    track_index: i64,
+    #[serde(rename = "track_seconds")]
+    track_seconds: f64,
+}
+
+/// One audiobook entry of libro.fm's `library/sync_library` request body.
+/// Field names match the decompiled `SyncBookRequest`; `finished` is a
+/// JSON string in sync requests (null here — the watch never marks books
+/// finished), unlike the boolean in library responses.
+#[derive(Serialize, Debug)]
+#[serde(crate = "rocket::serde")]
+struct SyncBookRequest {
+    isbn: i64,
+    hide: bool,
+    finished: Option<String>,
+    track_seconds: f64,
+    track_index: i64,
+    last_touched_at: String,
+    changed_at: String,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(crate = "rocket::serde")]
+struct SyncLibraryRequest {
+    audiobooks: Vec<SyncBookRequest>,
+}
+
+#[derive(Deserialize, Debug, Default, Serialize, PartialEq)]
+#[serde(crate = "rocket::serde")]
+struct SyncLibraryResponse {
+    #[serde(default, rename = "updated_isbns")]
+    updated_isbns: Vec<i64>,
+    /// The stamp this write put on the record, echoed back so the client
+    /// can remember what the cloud looked like after its own push (libro.fm
+    /// takes ~10 s to surface writes in reads, so the watch must not
+    /// re-read to learn this).
+    #[serde(
+        default,
+        rename = "changed_at",
+        skip_serializing_if = "Option::is_none"
+    )]
+    changed_at: Option<String>,
+}
+
+/// Headers libro.fm's Android client sends on every API request
+/// (rest/interceptors/AuthInterceptor). The server mirrors them so
+/// position writes look like the app's own traffic.
+fn libro_app_headers(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    builder
+        .header("X-LibroFm-Device", "Pixel 8")
+        .header("X-LibroFm-OsVer", "Android 34")
+        .header("X-LibroFm-AppVer", "7.38.2")
+}
+
+/// Push one book's position to libro.fm's `library/sync_library`, as the
+/// Android app's CloudSyncHandler does on play-state changes. Both
+/// timestamps are stamped server-side (`changed_at = last_touched_at =
+/// now`) so the watch's clock can never poison the last-writer-wins
+/// ordering. Any non-success status is surfaced as-is.
+async fn sync_position(
+    up: &Upstream,
+    api: &LibroApi,
+    auth: &str,
+    isbn: i64,
+    track_index: i64,
+    track_seconds: f64,
+) -> Result<SyncLibraryResponse, Status> {
+    let stamp = iso8601_millis(SystemTime::now());
+    let changed_at = stamp.clone();
+    let req = SyncLibraryRequest {
+        audiobooks: vec![SyncBookRequest {
+            isbn,
+            hide: false,
+            finished: None,
+            track_seconds,
+            track_index,
+            last_touched_at: stamp.clone(),
+            changed_at: stamp,
+        }],
+    };
+
+    let url = format!(
+        "{}/api/{}/library/sync_library",
+        api.base(),
+        LIBRO_API_VERSION
+    );
+    let resp = up
+        .send("sync-library", true, |c| {
+            libro_app_headers(c.post(url.as_str()).header("Authorization", auth)).json(&req)
+        })
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    let status = resp.status();
+    if status.is_success() {
+        let mut parsed = resp.json::<SyncLibraryResponse>().await.unwrap_or_default();
+        parsed.changed_at = Some(changed_at);
+        return Ok(parsed);
+    }
+    Err(status_to_status(&status).unwrap_or(Status::InternalServerError))
+}
+
+fn status_to_status(code: &StatusCode) -> Option<Status> {
+    Status::from_code(code.as_u16())
+}
+
+/// Fetch the whole library with position metadata, paginating through
+/// libro.fm's library dump (v12). An empty list means either an empty
+/// library or a dump without `user_metadata`; the caller decides.
+async fn fetch_library_positions(
+    up: &Upstream,
+    api: &LibroApi,
+    auth: &str,
+) -> Result<Vec<BookPosition>, Status> {
+    let mut out: Vec<BookPosition> = Vec::new();
+    let mut page = 1usize;
+    let mut total_pages = 1u32;
+    while page as u32 <= total_pages && page <= 100 {
+        let url = format!(
+            "{}/api/{}/library?page={}",
+            api.base(),
+            LIBRO_API_VERSION,
+            page
+        );
+        let resp = up
+            .send("library-positions", true, |c| {
+                c.get(url.as_str()).header("Authorization", auth)
+            })
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+        let status = resp.status();
+        if status != StatusCode::OK {
+            return Err(status_to_status(&status).unwrap_or(Status::InternalServerError));
+        }
+        let parsed: LibroBooksResponse =
+            resp.json().await.map_err(|_| Status::InternalServerError)?;
+        total_pages = parsed.total_pages.max(1);
+        for book in parsed.audiobooks {
+            out.push(BookPosition::from_book(book));
+        }
+        page += 1;
+    }
+    Ok(out)
+}
+
+/// Record the watch's latest position for one book with libro.fm. The
+/// watch only sends isbn/track/seconds; the server stamps the timestamps
+/// libro.fm's conflict resolution runs on. Returns the pass-through
+/// `updated_isbns` list on success.
+#[post("/v0/position", data = "<pos>")]
+async fn v0_set_position(
+    pos: Json<PositionIn>,
+    auth: AuthHeader,
+    up: &State<Upstream>,
+    api: &State<LibroApi>,
+    goatcounter: &State<Option<GoatCounter>>,
+) -> Result<Json<SyncLibraryResponse>, Status> {
+    let pos = pos.into_inner();
+    if pos.track_index < 0 || !pos.track_seconds.is_finite() || pos.track_seconds < 0.0 {
+        return Err(Status::BadRequest);
+    }
+    let updated = sync_position(
+        up,
+        api,
+        &auth.header,
+        pos.isbn,
+        pos.track_index,
+        pos.track_seconds,
+    )
+    .await?;
+    if let Some(gc) = &**goatcounter {
+        gc.hit("server/position-set").await;
+    }
+    Ok(Json(updated))
+}
+
+/// Read one book's server-side position. Sourced from a per-bearer,
+/// short-TTL cache; 404 if the isbn is not in the library.
+#[get("/v0/position/<isbn>")]
+async fn v0_get_position(
+    isbn: i64,
+    auth: AuthHeader,
+    up: &State<Upstream>,
+    api: &State<LibroApi>,
+    cache: &State<PositionCache>,
+) -> Result<Json<BookPosition>, Status> {
+    let key = auth.header.clone();
+    {
+        let map = cache.0.lock().expect("position cache lock");
+        if let Some((at, list)) = map.get(&key) {
+            if at.elapsed() < POSITION_CACHE_TTL {
+                return list
+                    .iter()
+                    .find(|p| p.isbn == isbn)
+                    .cloned()
+                    .map(Json)
+                    .ok_or(Status::NotFound);
+            }
+        }
+    }
+    let list = fetch_library_positions(up, api, &auth.header).await?;
+    {
+        let mut map = cache.0.lock().expect("position cache lock");
+        if map.len() >= 16 {
+            map.clear();
+        }
+        map.insert(key, (Instant::now(), list.clone()));
+    }
+    list.iter()
+        .find(|p| p.isbn == isbn)
+        .cloned()
+        .map(Json)
+        .ok_or(Status::NotFound)
 }
 
 #[derive(Database)]
@@ -611,12 +978,11 @@ fn max_media_size() -> u64 {
 /// Parse a human-friendly size string into bytes. See [`max_media_size`].
 fn parse_size(s: &str) -> Result<u64, String> {
     let trimmed = s.trim();
-    let (digits, rest) = trimmed
-        .split_at(
-            trimmed
-                .find(|c: char| !c.is_ascii_digit() && c != '.' )
-                .unwrap_or(trimmed.len()),
-        );
+    let (digits, rest) = trimmed.split_at(
+        trimmed
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(trimmed.len()),
+    );
     let num: f64 = digits
         .parse()
         .map_err(|_| format!("no leading number in {s:?}"))?;
@@ -685,9 +1051,7 @@ fn prune_media_cache(max_bytes: u64) {
     }
 
     // Oldest first (by mtime; ties broken by path for determinism).
-    files.sort_by(|a, b| {
-        a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0))
-    });
+    files.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
 
     let to_remove = files.len().min(10);
     info!(
@@ -750,7 +1114,9 @@ async fn run_audio_downloads(rocket: Rocket<Build>) -> fairing::Result {
         Some(up) => up.clone(),
         None => return Err(rocket),
     };
-    let gc: Option<GoatCounter> = rocket.state::<Option<GoatCounter>>().and_then(|o| o.clone());
+    let gc: Option<GoatCounter> = rocket
+        .state::<Option<GoatCounter>>()
+        .and_then(|o| o.clone());
     let max_bytes = max_media_size();
 
     ensure_media_cache_dir();
@@ -872,7 +1238,9 @@ async fn run_audio_downloads(rocket: Rocket<Build>) -> fairing::Result {
                             if let Err(e) = write {
                                 error!(
                                     "[download] isbn {} failed writing {}: {}",
-                                    first.isbn, outpath.display(), e
+                                    first.isbn,
+                                    outpath.display(),
+                                    e
                                 );
                                 failed = true;
                                 break 'parts;
@@ -972,6 +1340,8 @@ async fn rocket() -> _ {
     rocket
         .configure(figment)
         .manage(Upstream::new())
+        .manage(LibroApi::default())
+        .manage(PositionCache::default())
         .manage(GoatCounter::from_env())
         .attach(Db::init())
         .attach(migrations_fairing)
@@ -984,6 +1354,8 @@ async fn rocket() -> _ {
                 auth,
                 success,
                 v0_lib,
+                v0_set_position,
+                v0_get_position,
                 v0_start_download,
                 v0_get_download
             ],
@@ -993,7 +1365,7 @@ async fn rocket() -> _ {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{body_partial_json, header, method, path};
+    use wiremock::matchers::{body_partial_json, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     // An Upstream with an effectively-unlimited limiter, so tests exercise the
@@ -1194,6 +1566,211 @@ mod tests {
         assert!(parse_size("1XB").is_err());
     }
 
+    // ------------------------------------------------------------------
+    // ISO-8601 stamping (libro.fm ApiDateFormat)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn iso8601_epoch() {
+        assert_eq!(
+            iso8601_millis(SystemTime::UNIX_EPOCH),
+            "1970-01-01T00:00:00.000Z"
+        );
+    }
+
+    #[test]
+    fn iso8601_known_timestamps() {
+        // 2023-11-14T22:13:20.123Z
+        let t = SystemTime::UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
+        assert_eq!(iso8601_millis(t), "2023-11-14T22:13:20.123Z");
+        // Leap-year day: 2024-02-29T23:59:59.999Z
+        let t = SystemTime::UNIX_EPOCH + Duration::from_millis(1_709_251_199_999);
+        assert_eq!(iso8601_millis(t), "2024-02-29T23:59:59.999Z");
+        // Year rollover: 2025-01-01T00:00:00.000Z
+        let t = SystemTime::UNIX_EPOCH + Duration::from_millis(1_735_689_600_000);
+        assert_eq!(iso8601_millis(t), "2025-01-01T00:00:00.000Z");
+    }
+
+    // ------------------------------------------------------------------
+    // Position sync (sync_library + library position dump)
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn sync_position_sends_expected_payload() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v12/library/sync_library"))
+            .and(header("Authorization", "Bearer tok"))
+            .and(body_partial_json(serde_json::json!({
+                "audiobooks": [{
+                    "isbn": 1234567,
+                    "hide": false,
+                    "finished": null,
+                    "track_seconds": 12.5,
+                    "track_index": 2
+                }]
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "updated_isbns": [1234567] })),
+            )
+            .mount(&server)
+            .await;
+
+        let up = test_upstream();
+        let api = LibroApi::with_base(&server.uri());
+        let out = sync_position(&up, &api, "Bearer tok", 1_234_567, 2, 12.5)
+            .await
+            .expect("sync should succeed");
+        assert_eq!(out.updated_isbns, vec![1_234_567]);
+        // The echo must carry the stamped changed_at.
+        let resp_body = serde_json::to_string(&out).unwrap();
+        assert!(resp_body.contains("changed_at"), "{resp_body}");
+        // The stamp fields must be present and RFC3339-shaped.
+        let requests = server.received_requests().await.unwrap();
+        let body = String::from_utf8(requests[0].body.clone()).unwrap();
+        assert!(body.contains("changed_at"), "body: {body}");
+        assert!(body.contains("last_touched_at"), "body: {body}");
+        // ISO-8601 UTC with millis, e.g. "2026-09-15T18:35:57.271Z".
+        for field in ["\"changed_at\":\"", "\"last_touched_at\":\""] {
+            let start = body.find(field).expect("field present") + field.len();
+            let stamp = &body[start..start + 24];
+            assert!(
+                stamp.ends_with('Z') && stamp.as_bytes()[10] == b'T',
+                "{stamp}"
+            );
+        }
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn sync_position_surfaces_404_without_fallback() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v12/library/sync_library"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let up = test_upstream();
+        let api = LibroApi::with_base(&server.uri());
+        let err = sync_position(&up, &api, "Bearer tok", 99, 0, 1.0).await;
+        assert_eq!(err, Err(Status::NotFound));
+        // Exactly one attempt: there is no fallback to another version.
+        let hits = server.received_requests().await.unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sync_position_surfaces_auth_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v12/library/sync_library"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let up = test_upstream();
+        let api = LibroApi::with_base(&server.uri());
+        let err = sync_position(&up, &api, "Bearer tok", 99, 0, 1.0).await;
+        assert_eq!(err, Err(Status::Unauthorized));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_positions_paginates_and_parses_metadata() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v12/library"))
+            .and(query_param("page", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "audiobooks": [{
+                    "title": "Book One", "authors": ["A"], "isbn": 1,
+                    "user_metadata": {
+                        "track_index": 3, "track_seconds": 120.5,
+                        "changed_at": "2026-09-15T00:00:00.000Z",
+                        "last_touched_at": "2026-09-15T00:00:00.000Z",
+                        "finished": false
+                    }
+                }],
+                "page": 1, "total_pages": 2
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v12/library"))
+            .and(query_param("page", "2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "audiobooks": [{
+                    "title": "Book Two", "authors": ["B"], "isbn": 2
+                }],
+                "page": 2, "total_pages": 2
+            })))
+            .mount(&server)
+            .await;
+
+        let up = test_upstream();
+        let api = LibroApi::with_base(&server.uri());
+        let out = fetch_library_positions(&up, &api, "Bearer tok")
+            .await
+            .expect("dump should succeed");
+        assert_eq!(out.len(), 2);
+        let p1 = out.iter().find(|p| p.isbn == 1).unwrap();
+        assert_eq!(p1.track_index, Some(3));
+        assert_eq!(p1.track_seconds, Some(120.5));
+        assert_eq!(p1.finished, Some(false));
+        // Book Two has no metadata; fields must be None.
+        let p2 = out.iter().find(|p| p.isbn == 2).unwrap();
+        assert_eq!(p2.track_index, None);
+        assert_eq!(p2.changed_at, None);
+    }
+
+    #[tokio::test]
+    async fn fetch_positions_surfaces_auth_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v12/library"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let up = test_upstream();
+        let api = LibroApi::with_base(&server.uri());
+        let err = fetch_library_positions(&up, &api, "Bearer tok").await;
+        assert_eq!(err, Err(Status::Unauthorized));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_positions_with_metadataless_dump_returns_none_fields() {
+        let server = MockServer::start().await;
+
+        // A schema (or account) without user_metadata: positions come back
+        // empty rather than erroring; the GET handler then 404s per book.
+        Mock::given(method("GET"))
+            .and(path("/api/v12/library"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "audiobooks": [{"title": "X", "authors": ["A"], "isbn": 1}],
+                "page": 1, "total_pages": 1
+            })))
+            .mount(&server)
+            .await;
+
+        let up = test_upstream();
+        let api = LibroApi::with_base(&server.uri());
+        let out = fetch_library_positions(&up, &api, "Bearer tok")
+            .await
+            .expect("metadataless dump should still read");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].track_index, None);
+        assert_eq!(out[0].track_seconds, None);
+    }
+
     #[test]
     fn max_media_size_defaults_when_unset() {
         // Make sure no override leaks in from the test runner env.
@@ -1206,10 +1783,8 @@ mod tests {
     /// confirm only the oldest 10 get removed when over the limit.
     #[test]
     fn prune_removes_oldest_when_over_limit() {
-        let tmp = std::env::temp_dir().join(format!(
-            "bookstride-prune-test-{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("bookstride-prune-test-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let cache = tmp.join(MEDIA_CACHE_DIRNAME);
         std::fs::create_dir_all(&cache).unwrap();
@@ -1224,10 +1799,8 @@ mod tests {
             std::fs::write(&p, vec![0u8; 100]).unwrap();
             // Backdate older files so file 0 is the oldest.
             let secs = 1_700_000_000 + i;
-            let _ = filetime::set_file_mtime(
-                &p,
-                filetime::FileTime::from_unix_time(secs as i64, 0),
-            );
+            let _ =
+                filetime::set_file_mtime(&p, filetime::FileTime::from_unix_time(secs as i64, 0));
         }
         // Also drop an unrelated file that must be ignored.
         std::fs::write(cache.join("notes.txt"), b"ignore me").unwrap();
@@ -1241,7 +1814,11 @@ mod tests {
             .filter_map(|e| e.file_name().to_str().map(String::from))
             .filter(|n| n.starts_with("bookstride_cache_"))
             .collect();
-        assert_eq!(remaining.len(), 2, "expected 2 survivors, got {remaining:?}");
+        assert_eq!(
+            remaining.len(),
+            2,
+            "expected 2 survivors, got {remaining:?}"
+        );
         // Files 10 and 11 should survive (they had the newest mtimes).
         assert!(remaining.iter().any(|n| n.contains("_10.")));
         assert!(remaining.iter().any(|n| n.contains("_11.")));

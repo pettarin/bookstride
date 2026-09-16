@@ -151,6 +151,62 @@ module DataStore {
     mDeleteList = books;
   }
 
+  // ------------------------------------------------------------------
+  // Position-sync state (see docs/watch-position-sync-design.md).
+  // Snapshots are dictionaries {isbn, track, seconds, changed_at} in
+  // cloud units (track zero-indexed, seconds a float). These live in
+  // Application Storage, not Properties, because they are structured
+  // values rather than declared settings.
+  // ------------------------------------------------------------------
+
+  function getPendingPosition() as Lang.Dictionary? {
+    maybeInit();
+    var v = Application.Storage.getValue("PENDING_POSITION");
+    return v instanceof Lang.Dictionary ? v : null;
+  }
+
+  function setPendingPosition(pos as Lang.Dictionary?) {
+    if (pos == null) {
+      try {
+        Application.Storage.deleteValue("PENDING_POSITION");
+      } catch (e) {
+        // Already absent.
+      }
+    } else {
+      Application.Storage.setValue("PENDING_POSITION", pos);
+    }
+  }
+
+  function getLastSynced() as Lang.Dictionary? {
+    maybeInit();
+    var v = Application.Storage.getValue("LAST_SYNCED");
+    return v instanceof Lang.Dictionary ? v : null;
+  }
+
+  function setLastSynced(synced as Lang.Dictionary) {
+    Application.Storage.setValue("LAST_SYNCED", synced);
+  }
+
+  function getDivergenceDeclined() as Lang.Boolean {
+    maybeInit();
+    var v = Application.Storage.getValue("DIVERGENCE_DECLINED");
+    return v instanceof Lang.Boolean ? v : false;
+  }
+
+  function setDivergenceDeclined(flag as Lang.Boolean) {
+    Application.Storage.setValue("DIVERGENCE_DECLINED", flag);
+  }
+
+  function getAuthStale() as Lang.Boolean {
+    maybeInit();
+    var v = Application.Storage.getValue("AUTH_STALE");
+    return v instanceof Lang.Boolean ? v : false;
+  }
+
+  function setAuthStale(flag as Lang.Boolean) {
+    Application.Storage.setValue("AUTH_STALE", flag);
+  }
+
   function syncAndPlay() {
     DataStore.setLastViewWasPlayback(false);
     if (getCurrentTrack() == 0) {

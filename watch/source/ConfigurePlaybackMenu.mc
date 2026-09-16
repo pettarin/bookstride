@@ -5,7 +5,14 @@ using Toybox.Lang;
 class ConfigurePlaybackMenu extends WatchUi.Menu2 {
   // Constructor
   function initialize() {
-    Menu2.initialize({ :title => Rez.Strings.playbackMenuTitle });
+    var title = Rez.Strings.playbackMenuTitle;
+    if (DataStore.getAuthStale()) {
+      // Auth failures surface as a one-line hint, not a prompt; the
+      // OAuth flow re-establishes the token, after which pending position
+      // pushes flush.
+      title = "Sign-in expired";
+    }
+    Menu2.initialize({ :title => title });
 
     var books = DataStore.getBooks();
     var modifiedBooks = false;

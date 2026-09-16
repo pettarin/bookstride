@@ -44,6 +44,9 @@ class SyncDelegate extends Communications.SyncDelegate {
 
   // Starts the sync with the system
   function onStartSync() {
+    // flush any position that failed to push earlier
+    PositionSync.flushPending();
+
     // Calculate the number of songs to be synced so the
     // progress can be updated properly
     mTotalIsbnsToSync = mSyncList.size() + mDeleteList.size();

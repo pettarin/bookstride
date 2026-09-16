@@ -11,6 +11,10 @@ class HomeView extends WatchUi.View {
   private var mShownSync = false;
 
   function onShow() {
+    // App-open position check. Non-blocking; may prompt if another
+    // device moved the current book's cloud position.
+    PositionSync.checkAtOpen();
+
     var books = DataStore.getBooks();
 
     if (books.size() != 0 || mShownSync) {

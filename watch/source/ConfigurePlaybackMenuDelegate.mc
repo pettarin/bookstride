@@ -17,7 +17,9 @@ class ConfigurePlaybackMenuDelegate extends WatchUi.Menu2InputDelegate {
         DataStore.setCurrentIsbn(id.toString());
         DataStore.setCurrentTrack(0);
       }
-      DataStore.syncAndPlay();
+      // Resolve any position divergence (prompting if another device
+      // moved the cloud record) before playback starts.
+      PositionSync.playWithCheck(method(:playNow));
     } else {
       WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
       DataStore.setDeleteList([]);
@@ -27,12 +29,16 @@ class ConfigurePlaybackMenuDelegate extends WatchUi.Menu2InputDelegate {
     }
   }
 
+  function playNow() {
+    DataStore.syncAndPlay();
+  }
+
   function onBack() {
     var isbn = DataStore.getCurrentIsbn();
     var books = DataStore.getBooks();
     for (var i = 0; i < books.size(); i += 1) {
       if (books[i]["isbn"] == isbn) {
-        DataStore.syncAndPlay();
+        PositionSync.playWithCheck(method(:playNow));
         return;
       }
     }

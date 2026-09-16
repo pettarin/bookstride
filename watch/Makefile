@@ -12,9 +12,13 @@ WARN     := -w
 
 MONKEYDO := monkeydo
 
+# Device the unit-test build targets (must be in manifest.xml products).
+TEST_DEVICE  := fr265s_sim
+TEST_RUN_DEV := fr265s
+
 SRCS     := $(shell find source resources -type f) manifest.xml monkey.jungle
 
-.PHONY: debug clean all supported_devices
+.PHONY: debug clean all supported_devices tests
 
 all:	$(BUILD)/App.iq
 
@@ -24,6 +28,22 @@ $(BUILD):
 
 $(BUILD)/%.prg: $(SRCS) | $(BUILD)
 	monkeyc -f $(JUNGLE) -d $* -o $@ -y $(KEY) $(WARN)
+
+# Run No Evil unit tests (watch/source/PositionSyncTests.mc). Builds a
+# simulator executable with the (:test) code included (-t), then runs the
+# suite in the simulator with monkeydo -t. The simulator must be running
+# first (`connectiq` from the SDK bin dir); add a test name after -t to
+# run a single test, e.g.
+#   PATH=<sdk>/bin:$$PATH make tests
+#   monkeydo build/tests.prg fr265s -t testFormatHms
+$(BUILD)/tests.prg: $(SRCS) | $(BUILD)
+	monkeyc -f $(JUNGLE) -d $(TEST_DEVICE) -o $@ -y $(KEY) -t $(WARN)
+
+tests: $(BUILD)/tests.prg
+	@out=$$($(MONKEYDO) $(BUILD)/tests.prg $(TEST_RUN_DEV) -t 2>&1); \
+	  echo "$$out"; \
+	  (echo "$$out" | grep -qE 'FAILED|Simulator not found|Unable to connect') && exit 1 || true; \
+	  echo "$$out" | grep -q 'PASSED' || exit 1
 
 # release mode
 $(BUILD)/App.iq: $(SRCS) | $(BUILD)

@@ -35,6 +35,7 @@ class ContentDelegate extends Media.ContentDelegate {
     songEvent as SongEvent,
     playbackPosition as Number or PlaybackPosition
   ) as Void {
+    var found = false;
     var downloadedBooks = DataStore.getBooks();
 
     for (var i = 0; i < downloadedBooks.size(); i += 1) {
@@ -45,12 +46,19 @@ class ContentDelegate extends Media.ContentDelegate {
           DataStore.setCurrentIsbn(downloadedBooks[i]["isbn"]);
           DataStore.setCurrentTrack(j);
           DataStore.setCurrentPosition(playbackPosition);
+          found = true;
         }
       }
+    }
+    if (found) {
+      PositionSync.onPositionUpdate(
+        DataStore.getCurrentTrack(),
+        DataStore.getCurrentPosition()
+      );
     }
   }
 
   function syncPosition() {
-
+    PositionSync.flushPending();
   }
 }

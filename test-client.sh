@@ -3,17 +3,23 @@
 # test-client.sh — exercise the Bookstride server the way the watch does,
 # without needing a Garmin device or the simulator.
 #
-# It walks the same three flows SyncDelegate.mc / OauthView.mc use:
-#   1. login    POST /auth            (form) -> 303 redirect to /success?token=...
-#   2. library  GET  /v0/lib/<page>   (Bearer) -> { res:[...], more:bool }
-#   3. download POST /v0/book/<isbn>/download        -> 202 { tracks:N }
-#               GET  /v0/book/<isbn>/<track>/track.mp3 (per track, 429 = not ready yet)
+# It walks the same flows SyncDelegate.mc / OauthView.mc use, plus the
+# position-sync endpoints:
+#   1. login       POST /auth            (form) -> 303 redirect to /success?token=...
+#   2. library     GET  /v0/lib/<page>   (Bearer) -> { res:[...], more:bool }
+#   3. download    POST /v0/book/<isbn>/download        -> 202 { tracks:N }
+#                  GET  /v0/book/<isbn>/<track>/track.mp3 (per track, 429 = not ready yet)
+#   4. push pos.   POST /v0/position  {isbn, track_index, track_seconds} (Bearer)
+#   5. read pos.   GET  /v0/position/<isbn>  (Bearer) -> {isbn, track_index, ...}
 #
 # Usage:
-#   ./test-client.sh login                 # print an access token
-#   ./test-client.sh list                  # list every audiobook in the account
-#   ./test-client.sh download <isbn> [dir] # download all tracks of a book
-#   ./test-client.sh all <isbn> [dir]      # login + list + download in one go
+#   ./test-client.sh login                        # print an access token
+#   ./test-client.sh list                         # list every audiobook in the account
+#   ./test-client.sh download <isbn> [dir]        # download all tracks of a book
+#   ./test-client.sh set-position <isbn> <track> <seconds>
+#                                         # push a listening position to libro.fm
+#   ./test-client.sh get-position <isbn>          # read a book's position from libro.fm
+#   ./test-client.sh all <isbn> [dir]             # login + list + download in one go
 #
 # Config (env vars):
 #   BASE_URL          server to hit          (default http://localhost:8000)
@@ -89,8 +95,10 @@ list_books() {
     body="${body%$'\n'*}"
     [[ "$status" == "200" ]] || die "library request failed (HTTP $status) on page $page"
 
-    # tab-separated: isbn, author, title — easy to eyeball and to grep for an isbn.
-    printf '%s' "$body" | jq -r '.res[] | "\(.isbn)\t\(.author1)\t\(.title)"'
+    # tab-separated: isbn, author, title, track, seconds, changed_at — easy
+    # to eyeball and to grep for an isbn. Position columns show "-" for
+    # books libro.fm has no position for.
+    printf '%s' "$body" | jq -r '.res[] | "\(.isbn)\t\(.author1)\t\(.title)\t\(.track_index // "-")\t\(.track_seconds // "-")\t\(.changed_at // "-")"'
 
     [[ "$(printf '%s' "$body" | jq -r '.more')" == "true" ]] || break
     page=$((page + 1))
@@ -137,6 +145,44 @@ download_book() {
 }
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 4. set-position: push a listening position to libro.fm via the server.
+# ---------------------------------------------------------------------------
+set_position() {
+  local token="$1" isbn="$2" track="$3" seconds="$4"
+  if ! [[ "$track" =~ ^[0-9]+$ && "$seconds" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    die "usage: set-position <isbn> <track> <seconds>  (track is a 0-based integer, seconds a number)"
+  fi
+
+  info "pushing position: isbn=$isbn track=$track seconds=$seconds"
+  local body status
+  body=$(curl -sS -w $'\n%{http_code}' -X POST \
+              -H "Authorization: Bearer $token" \
+              -H "Content-Type: application/json" \
+              -d "{\"isbn\":$isbn,\"track_index\":$track,\"track_seconds\":$seconds}" \
+              "$BASE_URL/v0/position") || die "could not reach $BASE_URL (is the server running?)"
+  status="${body##*$'\n'}"
+  body="${body%$'\n'*}"
+  [[ "$status" == "200" ]] || die "position push failed (HTTP $status): $(printf '%s' "$body" | head -c 200)"
+  info "libro.fm acknowledged: $body"
+}
+
+# ---------------------------------------------------------------------------
+# 5. get-position: read one book's position back from libro.fm.
+# ---------------------------------------------------------------------------
+get_position() {
+  local token="$1" isbn="$2"
+  info "fetching position for isbn $isbn"
+  local body status
+  body=$(curl -sS -w $'\n%{http_code}' \
+              -H "Authorization: Bearer $token" \
+              "$BASE_URL/v0/position/$isbn") || die "could not reach $BASE_URL (is the server running?)"
+  status="${body##*$'\n'}"
+  body="${body%$'\n'*}"
+  [[ "$status" == "200" ]] || die "position fetch failed (HTTP $status)"
+  printf '%s' "$body" | jq .
+}
+
 usage() {
   # Print the leading comment block (skip the shebang, stop at the first
   # non-comment line), with the leading "# " stripped.
@@ -152,6 +198,12 @@ main() {
     download)
       [[ $# -ge 1 ]] || usage 1
       download_book "$(get_token)" "$1" "${2:-}" ;;
+    set-position)
+      [[ $# -ge 3 ]] || usage 1
+      set_position "$(get_token)" "$1" "$2" "$3" ;;
+    get-position)
+      [[ $# -ge 1 ]] || usage 1
+      get_position "$(get_token)" "$1" ;;
     all)
       [[ $# -ge 1 ]] || usage 1
       local token; token=$(get_token)

@@ -46,6 +46,7 @@ class OauthView extends WatchUi.View {
       var token = data["token"];
       if (token != null) {
         Application.Properties.setValue("AUTHENTICATION_TOKEN", token);
+        DataStore.setAuthStale(false);
         WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
       }
     } else if (data != null) {
