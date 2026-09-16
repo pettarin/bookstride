@@ -577,13 +577,15 @@ async fn v0_lib(
 /// Payload for `POST /v0/position`: the watch's latest position for one
 /// book. `track_index` is zero-indexed and `track_seconds` is seconds
 /// within that track, exactly as libro.fm stores them.
-#[derive(Deserialize, Debug)]
-#[serde(crate = "rocket::serde")]
+///
+/// The watch (Connect IQ `Communications.makeWebRequest`) encodes a
+/// dictionary body as `application/x-www-form-urlencoded` — it has no
+/// JSON encoder for request bodies — so this must parse as a form, not
+/// JSON.
+#[derive(FromForm, Debug)]
 struct PositionIn {
     isbn: i64,
-    #[serde(rename = "track_index")]
     track_index: i64,
-    #[serde(rename = "track_seconds")]
     track_seconds: f64,
 }
 
@@ -733,7 +735,7 @@ async fn fetch_library_positions(
 /// `updated_isbns` list on success.
 #[post("/v0/position", data = "<pos>")]
 async fn v0_set_position(
-    pos: Json<PositionIn>,
+    pos: Form<PositionIn>,
     auth: AuthHeader,
     up: &State<Upstream>,
     api: &State<LibroApi>,

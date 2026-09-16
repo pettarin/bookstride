@@ -24,8 +24,8 @@ module PositionSyncTests {
   const BOOK_B = "9780987654321";
 
   // Reset persisted + in-memory state so each test starts deterministic.
-  // Current book is BOOK_A, track 3, position 12345000 ms (= 12345.0 s).
-  // No auth token: pushLocal then stores PENDING_POSITION and returns
+  // Current book is BOOK_A, track 3, position 12345 s. No auth token:
+  // pushLocal then stores PENDING_POSITION and returns
   // without touching the network.
   function reset() {
     Application.Properties.setValue("AUTHENTICATION_TOKEN", "");
@@ -35,7 +35,7 @@ module PositionSyncTests {
     Application.Storage.deleteValue("AUTH_STALE");
     DataStore.setCurrentIsbn(BOOK_A);
     DataStore.setCurrentTrack(3);
-    DataStore.setCurrentPosition(12345000);
+    DataStore.setCurrentPosition(12345);
 
     var c = PositionSync.get();
     c.mInFlight = false;
@@ -51,7 +51,7 @@ module PositionSyncTests {
     c.mRequestsDisabled = true;
     c.mLastPushIsbn = null;
     c.mLastPushTrack = null;
-    c.mLastPushPosMs = null;
+    c.mLastPushPosSec = null;
   }
 
   // ------------------------------------------------------------------
@@ -107,7 +107,8 @@ module PositionSyncTests {
   (:test)
   function testLocalSnapshotUnits(logger as Test.Logger) as Lang.Boolean {
     reset();
-    // Position is ms within the track; the snapshot carries cloud units:
+    // Position is seconds within the track (the DataStore unit and the
+    // cloud unit are the same); the snapshot carries cloud units:
     // zero-indexed track, seconds as a float.
     var snap = PositionSync.get().localSnapshot();
     Test.assert(snap != null);
@@ -140,7 +141,7 @@ module PositionSyncTests {
     var c = PositionSync.get();
     Test.assertEqualMessage(c.mLastPushIsbn, 9781234567890l, "attempt marker isbn");
     Test.assertEqualMessage(c.mLastPushTrack, 3, "attempt marker track");
-    Test.assertEqualMessage(c.mLastPushPosMs, 12345000, "attempt marker position");
+    Test.assertEqualMessage(c.mLastPushPosSec, 12345, "attempt marker position");
     return true;
   }
 
@@ -148,11 +149,11 @@ module PositionSyncTests {
   function testSameTrackTickDoesNotRepush(logger as Test.Logger) as Lang.Boolean {
     reset();
     // After a failed attempt, ticks on the same track within
-    // PUSH_INTERVAL_MS must not fire another push (throttle holds across failures)
+    // PUSH_INTERVAL_S must not fire another push (throttle holds across failures)
     var c = PositionSync.get();
     c.pushLocal();                          // markers + pending at 12345.0 s
-    DataStore.setCurrentPosition(12845000); // +5 s on the same track
-    c.onPositionUpdate(3, 12845000);
+    DataStore.setCurrentPosition(12845);    // +5 s on the same track
+    c.onPositionUpdate(3, 12845);
     Test.assertEqual(DataStore.getPendingPosition()["seconds"], 12345.0);
     return true;
   }
@@ -160,12 +161,12 @@ module PositionSyncTests {
   (:test)
   function testTickPastIntervalPushes(logger as Test.Logger) as Lang.Boolean {
     reset();
-    // The 10-minute mid-track interval is a legitimate retry trigger
-    // PUSH_INTERVAL_MS of progress fires the next attempt.
+    // The 10-minute mid-track interval is a legitimate retry trigger:
+    // PUSH_INTERVAL_S of progress fires the next attempt.
     var c = PositionSync.get();
     c.pushLocal();                          // markers + pending at 12345.0 s
-    DataStore.setCurrentPosition(12945000); // +600 s = PUSH_INTERVAL_MS
-    c.onPositionUpdate(3, 12945000);
+    DataStore.setCurrentPosition(12945);    // +600 s = PUSH_INTERVAL_S
+    c.onPositionUpdate(3, 12945);
     Test.assertEqual(DataStore.getPendingPosition()["seconds"], 12945.0);
     return true;
   }
@@ -179,8 +180,8 @@ module PositionSyncTests {
     c.pushLocal();                         // BOOK_A track 3 markers
     DataStore.setCurrentIsbn(BOOK_B);
     DataStore.setCurrentTrack(3);
-    DataStore.setCurrentPosition(500000);
-    c.onPositionUpdate(3, 500000);
+    DataStore.setCurrentPosition(500);
+    c.onPositionUpdate(3, 500);
     var pending = DataStore.getPendingPosition();
     Test.assertMessage(pending != null, "book change should push");
     Test.assertEqualMessage(pending["isbn"], 9780987654321l, "pending must track the new book");
@@ -225,7 +226,7 @@ module PositionSyncTests {
     DataStore.setDivergenceDeclined(true);
     var c = PositionSync.get();
     c.mPushInFlight = true;
-    c.onPositionUpdate(3, 12345000);
+    c.onPositionUpdate(3, 12345);
     Test.assertMessage(!DataStore.getDivergenceDeclined(), "tick must clear the declined flag");
     Test.assertMessage(DataStore.getPendingPosition() == null, "no push while one is in flight");
     return true;
@@ -266,7 +267,7 @@ module PositionSyncTests {
     reset();
     // A pending position for the current book is retried immediately; with
     // no token it stays pending and the attempt markers move to the retry.
-    DataStore.setCurrentPosition(990000); // 990.0 s
+    DataStore.setCurrentPosition(990); // 990.0 s
     DataStore.setPendingPosition({
       "isbn" => 9781234567890l,
       "track" => 3,
@@ -278,7 +279,7 @@ module PositionSyncTests {
     var pending = DataStore.getPendingPosition();
     Test.assertMessage(pending != null, "current-book pending must survive a retry");
     Test.assertEqualMessage(pending["seconds"], 990.0, "retry must carry the fresh position");
-    Test.assertEqualMessage(c.mLastPushPosMs, 990000, "retry must update the attempt marker");
+    Test.assertEqualMessage(c.mLastPushPosSec, 990, "retry must update the attempt marker");
     return true;
   }
 

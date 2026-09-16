@@ -8,8 +8,8 @@ using Toybox.WatchUi;
 
 // How far apart two positions must be (seconds) to count as different.
 const POSITION_EPS = 5.0;
-// Listening time between cloud pushes while a track plays.
-const PUSH_INTERVAL_MS = 600000;
+// Listening time between cloud pushes while a track plays (seconds).
+const PUSH_INTERVAL_S = 600;
 // libro.fm takes ~10s to surface writes in reads (see docs/watch-position-sync-design.md);
 // don't re-read the cloud right after a successful push.
 const READ_AFTER_PUSH_MS = 15000;
@@ -57,7 +57,7 @@ class PositionSyncCoordinator {
   var mRecentPushTimer = null;
   var mLastPushIsbn as Lang.Long? = null;
   var mLastPushTrack as Lang.Number? = null;
-  var mLastPushPosMs as Lang.Number? = null;
+  var mLastPushPosSec as Lang.Number? = null;
   // Unit tests flip this to force the offline path (store pending instead
   // of sending, skip reads); production leaves it false. Same code path
   // the app takes when the phone is out of range.
@@ -78,6 +78,8 @@ class PositionSyncCoordinator {
 
   // The current book's position as a cloud-unit snapshot, or null when
   // there's no current book / position (e.g. PlaybackPosition objects).
+  // DataStore's position is seconds within the track (see DataStore
+  // CURRENT_POSITION), which is already the cloud unit.
   function localSnapshot() as Lang.Dictionary? {
     var isbn = DataStore.getCurrentIsbn();
     var pos = DataStore.getCurrentPosition();
@@ -87,7 +89,8 @@ class PositionSyncCoordinator {
     return {
       "isbn" => isbn,
       "track" => DataStore.getCurrentTrack(),
-      "seconds" => (pos as Lang.Number).toFloat() / 1000.0,
+      // No /1000: DataStore's CURRENT_POSITION is seconds, not ms.
+      "seconds" => (pos as Lang.Number).toFloat(),
       "changed_at" => null
     };
   }
@@ -124,13 +127,13 @@ class PositionSyncCoordinator {
 
   // Called from ContentDelegate.onSong for every position tick. The
   // position is already persisted in DataStore before we get here.
-  function onPositionUpdate(track, positionMs) {
+  function onPositionUpdate(track, positionSec) {
     if (DataStore.getDivergenceDeclined()) {
       // The local position moved since the user last declined: the decline
       // no longer represents the current state.
       DataStore.setDivergenceDeclined(false);
     }
-    if (!(positionMs instanceof Lang.Number)) {
+    if (!(positionSec instanceof Lang.Number)) {
       // PlaybackPosition objects carry structure we don't parse; the next
       // Number-valued tick will sync.
       return;
@@ -146,8 +149,8 @@ class PositionSyncCoordinator {
     var trackChanged = mLastPushTrack == null
       || mLastPushIsbn != isbn
       || track != mLastPushTrack;
-    var listenedFar = mLastPushPosMs == null
-      || (positionMs.toNumber() - mLastPushPosMs).abs() >= PUSH_INTERVAL_MS;
+    var listenedFar = mLastPushPosSec == null
+      || (positionSec.toNumber() - mLastPushPosSec).abs() >= PUSH_INTERVAL_S;
     if (trackChanged || listenedFar) {
       pushLocal();
     }
@@ -165,7 +168,7 @@ class PositionSyncCoordinator {
     // mid-track pushes, retries at trigger points instead.
     mLastPushIsbn = snapshot["isbn"];
     mLastPushTrack = snapshot["track"];
-    mLastPushPosMs = (snapshot["seconds"] * 1000.0).toNumber();
+    mLastPushPosSec = snapshot["seconds"].toNumber();
     var token = Application.Properties.getValue("AUTHENTICATION_TOKEN");
     if (token == null || token == "" || mRequestsDisabled) {
       DataStore.setPendingPosition(snapshot);
@@ -204,7 +207,7 @@ class PositionSyncCoordinator {
         mLastPushTrack = snapshot["track"];
         var pos = DataStore.getCurrentPosition();
         if (pos instanceof Lang.Number) {
-          mLastPushPosMs = pos;
+          mLastPushPosSec = pos;
         }
         mRecentPush = true;
         mRecentPushTimer.start(method(:readAfterPushExpired), READ_AFTER_PUSH_MS, false);
@@ -453,10 +456,12 @@ class PositionSyncCoordinator {
 
   // Adopt the cloud position: seek the current book and record it as the
   // last-synced state. Clears any pending local position so the discarded
-  // session can't be pushed later.
+  // session can't be pushed later. No unit conversion: cloud seconds are
+  // DataStore's CURRENT_POSITION unit (Media.ActiveContent consumes
+  // seconds too).
   private function adoptRemote(cloud as Lang.Dictionary) {
     DataStore.setCurrentTrack(cloud["track"]);
-    DataStore.setCurrentPosition((cloud["seconds"] * 1000.0).toNumber());
+    DataStore.setCurrentPosition(cloud["seconds"].toNumber());
     DataStore.setLastSynced(cloud);
     DataStore.setPendingPosition(null);
   }
@@ -488,8 +493,8 @@ module PositionSync {
     return mCoordinator;
   }
 
-  function onPositionUpdate(track, positionMs) as Void {
-    get().onPositionUpdate(track, positionMs);
+  function onPositionUpdate(track, positionSec) as Void {
+    get().onPositionUpdate(track, positionSec);
   }
 
   function flushPending() as Void {

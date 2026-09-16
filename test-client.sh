@@ -158,8 +158,9 @@ set_position() {
   local body status
   body=$(curl -sS -w $'\n%{http_code}' -X POST \
               -H "Authorization: Bearer $token" \
-              -H "Content-Type: application/json" \
-              -d "{\"isbn\":$isbn,\"track_index\":$track,\"track_seconds\":$seconds}" \
+              --data-urlencode "isbn=$isbn" \
+              --data-urlencode "track_index=$track" \
+              --data-urlencode "track_seconds=$seconds" \
               "$BASE_URL/v0/position") || die "could not reach $BASE_URL (is the server running?)"
   status="${body##*$'\n'}"
   body="${body%$'\n'*}"

@@ -90,6 +90,12 @@ module DataStore {
     mTrack = track;
   }
 
+  // Position within the current track, in SECONDS. This matches
+  // Media.ContentDelegate.onSong's playbackPosition Number and
+  // Media.ActiveContent's playbackStartPos, both of which are seconds
+  // per the Connect IQ API docs — no conversion happens at either
+  // boundary, and PositionSync pushes it to the cloud as-is (libro.fm's
+  // track_seconds is also seconds).
   function getCurrentPosition() as Lang.Number {
     maybeInit();
     if (mPosition instanceof Lang.Number) {
